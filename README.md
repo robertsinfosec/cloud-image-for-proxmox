@@ -62,3 +62,7 @@ I basically built-out a single script that does these things, and few other step
 As was the `virt-customize` command (you need to install `libguestfs-tools` first) which allows you to modify configuration of an offline VM disk:
 
 > https://libguestfs.org/virt-customize.1.html
+
+---
+
+![Alt](https://repobeats.axiom.co/api/embed/e5ec1c0f112dbd8b00638d82cf1027c41094fce9.svg "Repobeats analytics image")
