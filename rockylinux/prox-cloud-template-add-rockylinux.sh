@@ -134,20 +134,20 @@ else
     fi
 fi
 
-if [[ "${ROCKYLINUX_VERSION}" == "8" ]] ; then
-    IMAGE_FILE="Rocky-8-GenericCloud-Base.latest.x86_64.qcow2"
-    HASH_FILE="CHECKSUM"
+ROCKYLINUX_BASE_VER=`echo $ROCKYLINUX_VERSION | awk '{ sub(/.[0-9]{1,2}-[0-9]{6,8}.[0-9]{1,2}$/, ""); print}'`
+if [[ "${ROCKYLINUX_BASE_VER}" == "${ROCKYLINUX_VERSION}" ]]; then
+    IMAGE_FILE="Rocky-${ROCKYLINUX_BASE_VER}-GenericCloud-Base.latest.x86_64.qcow2"
 else
-    IMAGE_FILE="Rocky-9-GenericCloud-Base.latest.x86_64.qcow2"
-    HASH_FILE="CHECKSUM"
+    IMAGE_FILE="Rocky-${ROCKYLINUX_BASE_VER}-GenericCloud-Base-${ROCKYLINUX_VERSION}.x86_64.qcow2"
 fi
+HASH_FILE="CHECKSUM"
 
 MEM_SIZE="1024"
 CORES="1"
 DISK_SIZE="20G"
 SSH_KEYS="./keys"
-IMAGE_URL="https://dl.rockylinux.org/pub/rocky/${ROCKYLINUX_VERSION}/images/x86_64/${IMAGE_FILE}"
-HASH_URL="https://dl.rockylinux.org/pub/rocky/${ROCKYLINUX_VERSION}/images/x86_64/"
+IMAGE_URL="https://dl.rockylinux.org/pub/rocky/${ROCKYLINUX_BASE_VER}/images/x86_64/${IMAGE_FILE}"
+HASH_URL="https://dl.rockylinux.org/pub/rocky/${ROCKYLINUX_BASE_VER}/images/x86_64/"
 
 echo ""
 echo "VM_ID................: $VM_ID"
