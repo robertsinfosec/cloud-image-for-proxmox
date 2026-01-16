@@ -375,6 +375,54 @@ check_libguestfs_dns() {
     exit 1
 }
 
+lookup_in_catalog() {
+    local distro=$1
+    local release=$2
+    local version=$3
+    local field=$4  # "release", "version", or "notes"
+    
+    local catalog_file="$CONFIG_ROOT/catalog/${distro}-catalog.yaml"
+    if [[ ! -f "$catalog_file" ]]; then
+        return 1
+    fi
+    
+    local catalog_count
+    catalog_count=$(yq_read ".catalog | length" "$catalog_file")
+    if [[ "$catalog_count" == "null" || "$catalog_count" == "0" ]]; then
+        return 1
+    fi
+    
+    for ((i=0; i<catalog_count; i++)); do
+        local cat_distro cat_release cat_version
+        cat_distro=$(yq_read ".catalog[$i].distro" "$catalog_file")
+        cat_release=$(yq_read ".catalog[$i].release" "$catalog_file")
+        cat_version=$(yq_read ".catalog[$i].version" "$catalog_file")
+        
+        # Normalize null values
+        [[ "$cat_release" == "null" ]] && cat_release=""
+        [[ "$cat_version" == "null" ]] && cat_version=""
+        
+        # Match by release or version
+        if [[ "$cat_distro" == "$distro" ]]; then
+            if [[ -n "$release" && "$cat_release" == "$release" ]] || \
+               [[ -n "$version" && "$cat_version" == "$version" ]]; then
+                case "$field" in
+                    release) echo "$cat_release"; return 0 ;;
+                    version) echo "$cat_version"; return 0 ;;
+                    notes)
+                        local notes
+                        notes=$(yq_read ".catalog[$i].notes" "$catalog_file")
+                        [[ "$notes" != "null" ]] && echo "$notes"
+                        return 0
+                        ;;
+                esac
+            fi
+        fi
+    done
+    
+    return 1
+}
+
 collect_build_meta() {
     local build_file=$1
     local build_index=$2
@@ -397,6 +445,30 @@ collect_build_meta() {
         return 1
     fi
 
+    # Look up missing fields from catalog
+    if [[ -n "$BUILD_DISTRO" ]]; then
+        if [[ -z "$BUILD_VERSION" && -n "$BUILD_RELEASE" ]]; then
+            # Have release, need version
+            local catalog_version
+            catalog_version=$(lookup_in_catalog "$BUILD_DISTRO" "$BUILD_RELEASE" "" "version")
+            if [[ -n "$catalog_version" ]]; then
+                BUILD_VERSION="$catalog_version"
+            else
+                BUILD_VERSION="$BUILD_RELEASE"
+            fi
+        elif [[ -z "$BUILD_RELEASE" && -n "$BUILD_VERSION" ]]; then
+            # Have version, need release
+            local catalog_release
+            catalog_release=$(lookup_in_catalog "$BUILD_DISTRO" "" "$BUILD_VERSION" "release")
+            if [[ -n "$catalog_release" ]]; then
+                BUILD_RELEASE="$catalog_release"
+            else
+                BUILD_RELEASE="$BUILD_VERSION"
+            fi
+        fi
+    fi
+
+    # Final fallback if catalog lookup didn't help
     if [[ -z "$BUILD_VERSION" ]]; then
         BUILD_VERSION="$BUILD_RELEASE"
     fi
@@ -667,12 +739,43 @@ for build_file in "${BUILD_FILES[@]}"; do
         HASH_FILE="$CACHE_DIR/${distro}-${release}-${HASH_BASENAME}"
         WORK_IMAGE="$CACHE_DIR/${distro}-${version}-${release}-work.qcow2"
 
-        setStatus "Building ${distro} ${version} (${release}) as VMID ${vmid}" "*"
+        # Look up catalog information for better display
+        CATALOG_NOTES=$(lookup_in_catalog "$distro" "$release" "$version" "notes")
+        if [[ -n "$CATALOG_NOTES" ]]; then
+            BUILD_DISPLAY="$CATALOG_NOTES"
+        else
+            BUILD_DISPLAY="${distro} ${version} (${release})"
+        fi
+
+        # Display banner for this build
+        echo ""
+        echo -e "${LightCyan}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${LightCyan}║${NC} ${LightGreen}Building: ${BUILD_DISPLAY}${NC}"
+        echo -e "${LightCyan}║${NC} ${White}VMID: ${vmid}  │  Storage: ${storage}${NC}"
+        echo -e "${LightCyan}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
 
         HASHES_MATCH=-1
         FORCE_DOWNLOAD=0
         ATTEMPT=0
         BUILD_FAILED=0
+
+        # Check if checksum validation is available
+        if [[ -z "${SHA256SUMS_PATH:-}" ]]; then
+            setStatus "No checksum file configured for ${distro}. Skipping checksum validation." "q"
+            HASHES_MATCH=1  # Skip validation loop
+            
+            # Download image if not cached
+            if [[ ! -f "$IMAGE_ORIG" ]]; then
+                setStatus "Downloading image: $IMAGE_URL" "*"
+                if ! wget --progress=bar:force "$IMAGE_URL" -O "$IMAGE_ORIG"; then
+                    setStatus "Image download failed. Skipping this build." "f"
+                    BUILD_FAILED=1
+                fi
+            else
+                setStatus "Using cached image: $IMAGE_ORIG" "*"
+            fi
+        fi
 
         while [[ $HASHES_MATCH -lt 1 ]]; do
             ATTEMPT=$((ATTEMPT+1))

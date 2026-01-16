@@ -4,7 +4,9 @@ DISTRO_NAME="oraclelinux"
 IMAGE_URL_BASE="https://yum.oracle.com"
 IMAGE_NAME_TEMPLATE="OracleLinux-${RELEASE}-GenericCloud-latest.x86_64.qcow2"
 IMAGE_PATH="templates/OracleLinux/OL${RELEASE}/u0/x86_64/${IMAGE_NAME_TEMPLATE}"
-SHA256SUMS_PATH="templates/OracleLinux/OL${RELEASE}/u0/x86_64/CHECKSUM"
+# Oracle Linux does not provide a programmatic checksum file
+# Checksums are displayed on: https://yum.oracle.com/oracle-linux-templates.html
+SHA256SUMS_PATH=""
 
 PKG_MANAGER="dnf"
 PKGS=("qemu-guest-agent" "cloud-init" "firewalld" "watchdog")
