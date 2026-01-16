@@ -139,6 +139,62 @@ check_libguestfs() {
     fi
 }
 
+check_dhcpcd() {
+    # Check if dhcpcd (DHCP client) is available for libguestfs appliance
+    if ! dpkg -l | grep -qE '^ii\s+(dhcpcd-base|dhcpcd5|isc-dhcp-client)'; then
+        if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
+            echo "ERROR: A DHCP client is required for libguestfs networking."
+            echo "libguestfs needs dhcpcd-base (or dhclient) to configure network access inside the appliance."
+            echo "Without it, virt-customize cannot install packages due to DNS resolution failures."
+            echo "Install: apt-get install dhcpcd-base"
+            exit 1
+        fi
+
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════════════════════"
+        echo "  DHCP Client Required for libguestfs"
+        echo "═══════════════════════════════════════════════════════════════════════════════"
+        echo ""
+        echo "The libguestfs appliance (used by virt-customize) requires a DHCP client to"
+        echo "configure networking. Without it, the appliance cannot:"
+        echo "  • Bring up network interfaces"
+        echo "  • Obtain an IP address"
+        echo "  • Resolve DNS names"
+        echo "  • Download/install packages"
+        echo ""
+        echo "This is a known regression in recent libguestfs versions. The recommended fix"
+        echo "is to install 'dhcpcd-base' on the Proxmox host. This provides the DHCP client"
+        echo "binary without running any services on the host system."
+        echo ""
+        echo "After installation, virt-customize will automatically use dhcpcd to configure"
+        echo "networking inside the appliance, restoring the 'it just works' behavior."
+        echo ""
+        echo "Reference: https://github.com/libguestfs/libguestfs/issues/211"
+        echo "═══════════════════════════════════════════════════════════════════════════════"
+        echo ""
+        read -r -p "Install dhcpcd-base now? [y/N]: " reply
+        if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
+            echo ""
+            echo "ERROR: Cannot proceed without DHCP client for libguestfs."
+            echo "Package installation will fail due to DNS resolution errors."
+            echo "Install manually with: apt-get install dhcpcd-base"
+            echo ""
+            exit 1
+        fi
+
+        echo "Installing dhcpcd-base..."
+        if apt-get update && apt-get install -y dhcpcd-base; then
+            echo "Successfully installed dhcpcd-base."
+            # Ensure dhcpcd service is not started/enabled on the host
+            systemctl stop dhcpcd.service 2>/dev/null || true
+            systemctl disable dhcpcd.service 2>/dev/null || true
+        else
+            echo "ERROR: Failed to install dhcpcd-base."
+            exit 1
+        fi
+    fi
+}
+
 yq_read() {
     local query=$1
     local file=$2
@@ -277,37 +333,7 @@ extract_hash_from_file() {
     return 1
 }
 
-prepare_libguestfs_resolv() {
-    local resolv_source="/etc/resolv.conf"
-    local fallback_files=(
-        "/run/systemd/resolve/resolv.conf"
-        "/run/resolvconf/resolv.conf"
-        "/etc/resolv.conf"
-    )
 
-    if grep -qE "^nameserver\s+127\." /etc/resolv.conf 2>/dev/null; then
-        for candidate in "${fallback_files[@]}"; do
-            if [[ -f "$candidate" ]] && grep -qE "^nameserver\s+" "$candidate" && ! grep -qE "^nameserver\s+127\." "$candidate"; then
-                resolv_source="$candidate"
-                break
-            fi
-        done
-    fi
-
-    if [[ ! -f "$resolv_source" ]]; then
-        echo "ERROR: resolv.conf source not found: $resolv_source"
-        exit 1
-    fi
-
-    if [[ -z "${RESOLV_TEMP_FILE:-}" ]]; then
-        RESOLV_TEMP_FILE=$(mktemp)
-        cp "$resolv_source" "$RESOLV_TEMP_FILE"
-        chmod 0644 "$RESOLV_TEMP_FILE"
-        trap 'rm -f "$RESOLV_TEMP_FILE"' EXIT
-    fi
-
-    export LIBGUESTFS_RESOLV_CONF="$RESOLV_TEMP_FILE"
-}
 
 check_libguestfs_dns() {
     local test_host="download.opensuse.org"
@@ -489,6 +515,7 @@ check_command wget "Install wget and retry."
 check_command qm "This script must be run on a Proxmox host."
 check_command pvesm "This script must be run on a Proxmox host."
 check_libguestfs
+check_dhcpcd
 setStatus "Runtime prerequisites OK" "s"
 
 NO_SYSLOG=$(yq_read ".defaults.behavior.no_syslog" "$DEFAULTS_FILE")
@@ -723,18 +750,6 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         VIRT_ARGS=()
         if [[ "$SKIP_PKG_INSTALL_EFFECTIVE" != "true" ]]; then
-            prepare_libguestfs_resolv
-            if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
-                VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/tmp/resolv.conf")
-                VIRT_ARGS+=("--run-command" "cp /tmp/resolv.conf /etc/resolv.conf && sync")
-                # Bring up network
-                VIRT_ARGS+=("--run-command" "ip link set eth0 up && dhclient eth0 && sleep 1")
-                # Test DNS with getent and curl
-                VIRT_ARGS+=("--run-command" "echo 'nameserver 169.254.2.2' > /etc/resolv.conf && cat /etc/resolv.conf")
-                VIRT_ARGS+=("--run-command" "getent hosts mirrors.almalinux.org || echo 'getent DNS failed'")
-                VIRT_ARGS+=("--run-command" "curl -v --connect-timeout 5 http://1.1.1.1 2>&1 | head -5 || echo 'curl to IP works'")
-                VIRT_ARGS+=("--run-command" "curl -v --connect-timeout 5 http://mirrors.almalinux.org 2>&1 | head -10 || echo 'curl to hostname failed'")
-            fi
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
                     VIRT_ARGS+=("--install" "$(IFS=,; echo "${PKGS[*]}")")
@@ -761,7 +776,6 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         if [[ ${#VIRT_ARGS[@]} -gt 0 ]]; then
             setStatus "Customizing image" "*"
-            prepare_libguestfs_resolv
             if ! LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 LIBGUESTFS_TIMEOUT=600 virt-customize --network -a "$WORK_IMAGE" "${VIRT_ARGS[@]}"; then
                 setStatus "Unable to customize image: $WORK_IMAGE" "f"
                 exit 1
