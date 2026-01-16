@@ -669,15 +669,25 @@ for build_file in "${BUILD_FILES[@]}"; do
         HASHES_MATCH=-1
         FORCE_DOWNLOAD=0
         ATTEMPT=0
+        BUILD_FAILED=0
 
         while [[ $HASHES_MATCH -lt 1 ]]; do
             ATTEMPT=$((ATTEMPT+1))
+            
+            if [[ $ATTEMPT -gt 3 ]]; then
+                setStatus "Unable to validate image after 3 attempts. Skipping this build." "f"
+                BUILD_FAILED=1
+                break
+            fi
+            
             setStatus "Checking image cache (attempt: $ATTEMPT)" "*"
 
             if [[ ! -f "$IMAGE_ORIG" || "$FORCE_DOWNLOAD" -eq 1 ]]; then
                 setStatus "Downloading image: $IMAGE_URL" "*"
                 if ! wget --progress=bar:force "$IMAGE_URL" -O "$IMAGE_ORIG"; then
-                    setStatus "Download failed." "f"
+                    setStatus "Image download failed. Retrying..." "f"
+                    FORCE_DOWNLOAD=1
+                    continue
                 fi
                 FORCE_DOWNLOAD=0
             else
@@ -686,8 +696,9 @@ for build_file in "${BUILD_FILES[@]}"; do
 
             setStatus "Downloading checksum file: $HASH_URL" "*"
             if ! wget -q "$HASH_URL" -O "$HASH_FILE"; then
-                setStatus "Checksum download failed." "f"
-                exit 1
+                setStatus "Checksum download failed. Retrying..." "f"
+                FORCE_DOWNLOAD=1
+                continue
             fi
 
             setStatus "Generating image hash (${HASH_CMD})" "*"
@@ -697,8 +708,9 @@ for build_file in "${BUILD_FILES[@]}"; do
             HASH_FROMINET=$(extract_hash_from_file "$HASH_FILE" "$IMAGE_BASENAME")
 
             if [[ -z "$HASH_FROMINET" ]]; then
-                setStatus "Checksum file does not contain entry for ${IMAGE_BASENAME}" "f"
-                exit 1
+                setStatus "Checksum file does not contain entry for ${IMAGE_BASENAME}. Skipping this build." "f"
+                BUILD_FAILED=1
+                break
             fi
 
             setStatus "Comparing hashes" "*"
@@ -710,12 +722,12 @@ for build_file in "${BUILD_FILES[@]}"; do
                 HASHES_MATCH=1
                 setStatus "Hashes match." "s"
             fi
-
-            if [[ $ATTEMPT -gt 3 ]]; then
-                setStatus "FATAL: Unable to validate image after 3 attempts." "f"
-                exit 1
-            fi
         done
+
+        if [[ $BUILD_FAILED -eq 1 ]]; then
+            setStatus "Skipping build for ${distro} ${version} (${release})" "f"
+            continue
+        fi
 
         cp "$IMAGE_ORIG" "$WORK_IMAGE"
 
