@@ -10,5 +10,6 @@ PKG_MANAGER="dnf"
 PKGS=("qemu-guest-agent" "cloud-init" "firewalld" "watchdog")
 OPTIONAL_PKGS=("fail2ban" "crowdsec")
 VIRT_CUSTOMIZE_OPTS=(
-  "--run-command 'truncate -s 0 /etc/machine-id'"
+  "--run-command"
+  "truncate -s 0 /etc/machine-id"
 )

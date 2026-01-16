@@ -15,5 +15,6 @@ PKG_MANAGER="apt"
 PKGS=("qemu-guest-agent" "cloud-init" "ufw" "watchdog")
 OPTIONAL_PKGS=("fail2ban" "crowdsec" "figlet" "neofetch")
 VIRT_CUSTOMIZE_OPTS=(
-  "--run-command 'truncate -s 0 /etc/machine-id'"
+  "--run-command"
+  "truncate -s 0 /etc/machine-id"
 )

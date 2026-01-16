@@ -18,7 +18,8 @@ PKGS=("epel-release" "qemu-guest-agent" "cloud-init" "firewalld" "watchdog")
 OPTIONAL_PKGS=("fail2ban" "crowdsec")
 VIRT_CUSTOMIZE_OPTS=(
   "--selinux-relabel"
-  "--run-command 'truncate -s 0 /etc/machine-id'"
+  "--run-command"
+  "truncate -s 0 /etc/machine-id"
 )
 
 # Rocky Linux 9+ requires Proxmox CPU type 'host' to avoid kernel panics.

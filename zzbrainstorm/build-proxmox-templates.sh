@@ -594,7 +594,7 @@ for build_file in "${BUILD_FILES[@]}"; do
 
             if [[ ! -f "$IMAGE_ORIG" || "$HASHES_MATCH" -eq 0 ]]; then
                 setStatus "Downloading image: $IMAGE_URL" "*"
-                if ! wget -q "$IMAGE_URL" -O "$IMAGE_ORIG"; then
+                if ! wget --progress=bar:force "$IMAGE_URL" -O "$IMAGE_ORIG"; then
                     setStatus "Download failed." "f"
                 fi
             fi

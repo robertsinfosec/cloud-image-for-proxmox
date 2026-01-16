@@ -14,5 +14,6 @@ PKG_MANAGER="apk"
 PKGS=("qemu-guest-agent" "cloud-init" "nftables")
 OPTIONAL_PKGS=("fail2ban" "crowdsec")
 VIRT_CUSTOMIZE_OPTS=(
-  "--run-command 'truncate -s 0 /etc/machine-id'"
+  "--run-command"
+  "truncate -s 0 /etc/machine-id"
 )
