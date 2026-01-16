@@ -142,7 +142,7 @@ check_libguestfs() {
 yq_read() {
     local query=$1
     local file=$2
-    yq eval -r "$query" "$file"
+    yq eval --unwrapScalar "$query" "$file"
 }
 
 resolve_value() {
