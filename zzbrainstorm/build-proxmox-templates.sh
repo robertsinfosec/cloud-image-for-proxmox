@@ -569,6 +569,12 @@ for build_file in "${BUILD_FILES[@]}"; do
         VERSION="$version"
         source "$DISTROS_DIR/${distro}-config.sh"
 
+        SKIP_PKG_INSTALL_EFFECTIVE="${SKIP_PKG_INSTALL:-false}"
+        if [[ "$distro" == "opensuse" ]]; then
+            SKIP_PKG_INSTALL_EFFECTIVE="true"
+        fi
+        SKIP_PKG_INSTALL_EFFECTIVE=$(echo "$SKIP_PKG_INSTALL_EFFECTIVE" | awk '{print tolower($0)}')
+
         IMAGE_URL="${IMAGE_URL_BASE%/}/${IMAGE_PATH#/}"
         HASH_URL="${IMAGE_URL_BASE%/}/${SHA256SUMS_PATH#/}"
 
@@ -646,7 +652,7 @@ for build_file in "${BUILD_FILES[@]}"; do
         fi
 
         VIRT_ARGS=()
-        if [[ "${SKIP_PKG_INSTALL:-false}" != "true" ]]; then
+        if [[ "$SKIP_PKG_INSTALL_EFFECTIVE" != "true" ]]; then
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
                     VIRT_ARGS+=("--install" "$(IFS=,; echo "${PKGS[*]}")")
