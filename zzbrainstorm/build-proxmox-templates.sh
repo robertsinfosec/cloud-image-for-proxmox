@@ -277,6 +277,42 @@ extract_hash_from_file() {
     return 1
 }
 
+collect_build_meta() {
+    local build_file=$1
+    local build_index=$2
+
+    BUILD_DISTRO=$(yq_read ".builds[$build_index].distro" "$build_file")
+    BUILD_RELEASE=$(yq_read ".builds[$build_index].release" "$build_file")
+    BUILD_VERSION=$(yq_read ".builds[$build_index].version" "$build_file")
+    BUILD_VMID=$(yq_read ".builds[$build_index].vmid" "$build_file")
+
+    if [[ -z "$BUILD_VERSION" || "$BUILD_VERSION" == "null" ]]; then
+        BUILD_VERSION=""
+    fi
+
+    if [[ -z "$BUILD_RELEASE" || "$BUILD_RELEASE" == "null" ]]; then
+        echo "ERROR: Missing release in $build_file (index $build_index)."
+        return 1
+    fi
+
+    if [[ -z "$BUILD_VERSION" ]]; then
+        BUILD_VERSION="$BUILD_RELEASE"
+    fi
+
+    if [[ -z "$BUILD_DISTRO" || -z "$BUILD_VMID" ]]; then
+        echo "ERROR: Missing required build fields in $build_file (index $build_index)."
+        return 1
+    fi
+
+    BUILD_STORAGE=$(resolve_value "$build_file" "$build_index" "storage" "$DEFAULT_STORAGE")
+    if [[ -z "$BUILD_STORAGE" || "$BUILD_STORAGE" == "null" ]]; then
+        echo "ERROR: Storage not set. Configure defaults.storage or override.storage."
+        return 1
+    fi
+
+    return 0
+}
+
 matches_filter() {
     local distro=$1
     local release=$2
@@ -415,6 +451,8 @@ if [[ ${#BUILD_FILES[@]} -eq 0 ]]; then
 fi
 setStatus "Found ${#BUILD_FILES[@]} build file(s)" "s"
 
+setStatus "Planning build execution" "*"
+PLANNED_BUILDS=()
 for build_file in "${BUILD_FILES[@]}"; do
     build_count=$(yq_read ".builds | length" "$build_file")
     if [[ "$build_count" == "null" || "$build_count" == "0" ]]; then
@@ -422,28 +460,55 @@ for build_file in "${BUILD_FILES[@]}"; do
     fi
 
     for ((i=0; i<build_count; i++)); do
-        distro=$(yq_read ".builds[$i].distro" "$build_file")
-        release=$(yq_read ".builds[$i].release" "$build_file")
-        version=$(yq_read ".builds[$i].version" "$build_file")
-        vmid=$(yq_read ".builds[$i].vmid" "$build_file")
-
-        if [[ -z "$version" || "$version" == "null" ]]; then
-            version=""
-        fi
-
-        if [[ -z "$release" || "$release" == "null" ]]; then
-            echo "ERROR: Missing release in $build_file (index $i)."
+        if ! collect_build_meta "$build_file" "$i"; then
             exit 1
         fi
 
-        if [[ -z "$version" ]]; then
-            version="$release"
+        if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+            matched=false
+            for filter in "${ONLY_FILTERS[@]}"; do
+                if matches_filter "$BUILD_DISTRO" "$BUILD_RELEASE" "$BUILD_VERSION" "$filter"; then
+                    matched=true
+                    break
+                fi
+            done
+            if [[ "$matched" != "true" ]]; then
+                continue
+            fi
         fi
 
-        if [[ -z "$distro" || -z "$vmid" ]]; then
-            echo "ERROR: Missing required build fields in $build_file (index $i)."
+        PLANNED_BUILDS+=("${BUILD_DISTRO}|${BUILD_VERSION}|${BUILD_RELEASE}|${BUILD_VMID}|${BUILD_STORAGE}")
+    done
+done
+
+if [[ ${#PLANNED_BUILDS[@]} -eq 0 ]]; then
+    setStatus "No builds matched filters." "f"
+    exit 1
+fi
+
+setStatus "Planned builds:" "*"
+for entry in "${PLANNED_BUILDS[@]}"; do
+    IFS='|' read -r distro version release vmid storage <<< "$entry"
+    echo "  - ${distro} ${version} (${release}) VMID ${vmid} storage ${storage}"
+done
+echo ""
+
+for build_file in "${BUILD_FILES[@]}"; do
+    build_count=$(yq_read ".builds | length" "$build_file")
+    if [[ "$build_count" == "null" || "$build_count" == "0" ]]; then
+        continue
+    fi
+
+    for ((i=0; i<build_count; i++)); do
+        if ! collect_build_meta "$build_file" "$i"; then
             exit 1
         fi
+
+        distro="$BUILD_DISTRO"
+        release="$BUILD_RELEASE"
+        version="$BUILD_VERSION"
+        vmid="$BUILD_VMID"
+        storage="$BUILD_STORAGE"
 
         if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
             matched=false
@@ -465,11 +530,6 @@ for build_file in "${BUILD_FILES[@]}"; do
         SSH_KEYS_FILE=$(resolve_value "$build_file" "$i" "cloud_init.ssh_keys_file" "$DEFAULT_SSH_KEYS_FILE")
         SSH_KEYS_URL=$(resolve_value "$build_file" "$i" "cloud_init.ssh_keys_url" "$DEFAULT_SSH_KEYS_URL")
 
-        storage=$(resolve_value "$build_file" "$i" "storage" "$DEFAULT_STORAGE")
-        if [[ -z "$storage" || "$storage" == "null" ]]; then
-            echo "ERROR: Storage not set. Configure defaults.storage or override.storage."
-            exit 1
-        fi
 
         CORES=$(resolve_value "$build_file" "$i" "vm.cores" "$DEFAULT_CORES")
         MEMORY=$(resolve_value "$build_file" "$i" "vm.memory" "$DEFAULT_MEMORY")
