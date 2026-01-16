@@ -585,18 +585,22 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         setStatus "Building ${distro} ${version} (${release}) as VMID ${vmid}" "*"
 
-        HASHES_MATCH=0
+        HASHES_MATCH=-1
+        FORCE_DOWNLOAD=0
         ATTEMPT=0
 
         while [[ $HASHES_MATCH -lt 1 ]]; do
             ATTEMPT=$((ATTEMPT+1))
             setStatus "Checking image cache (attempt: $ATTEMPT)" "*"
 
-            if [[ ! -f "$IMAGE_ORIG" || "$HASHES_MATCH" -eq 0 ]]; then
+            if [[ ! -f "$IMAGE_ORIG" || "$FORCE_DOWNLOAD" -eq 1 ]]; then
                 setStatus "Downloading image: $IMAGE_URL" "*"
                 if ! wget --progress=bar:force "$IMAGE_URL" -O "$IMAGE_ORIG"; then
                     setStatus "Download failed." "f"
                 fi
+                FORCE_DOWNLOAD=0
+            else
+                setStatus "Using cached image: $IMAGE_ORIG" "*"
             fi
 
             setStatus "Downloading checksum file: $HASH_URL" "*"
@@ -619,6 +623,7 @@ for build_file in "${BUILD_FILES[@]}"; do
             setStatus "Comparing hashes" "*"
             if [[ "$HASH_ONDISK" != "$HASH_FROMINET" ]]; then
                 HASHES_MATCH=0
+                FORCE_DOWNLOAD=1
                 setStatus "Hashes do NOT match. Retrying..." "f"
             else
                 HASHES_MATCH=1

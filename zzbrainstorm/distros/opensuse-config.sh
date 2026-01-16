@@ -13,8 +13,8 @@ IMAGE_PATH="${OPENSUSE_DISTRO_LABEL}_${VERSION}/images/${IMAGE_NAME_TEMPLATE}"
 SHA256SUMS_PATH="${IMAGE_PATH}.sha256"
 
 PKG_MANAGER="zypper"
-PKGS=("qemu-guest-agent" "cloud-init" "firewalld" "watchdog")
-OPTIONAL_PKGS=("fail2ban" "crowdsec")
+PKGS=("qemu-guest-agent" "cloud-init")
+OPTIONAL_PKGS=("firewalld" "watchdog" "fail2ban" "crowdsec")
 VIRT_CUSTOMIZE_OPTS=(
   "--run-command"
   "truncate -s 0 /etc/machine-id"
