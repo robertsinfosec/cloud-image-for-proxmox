@@ -725,14 +725,9 @@ for build_file in "${BUILD_FILES[@]}"; do
         if [[ "$SKIP_PKG_INSTALL_EFFECTIVE" != "true" ]]; then
             prepare_libguestfs_resolv
             if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
-                # Investigate /etc filesystem structure
-                VIRT_ARGS+=("--run-command" "echo '=== Mounts ===' && mount | grep -E '(overlay|tmpfs|/etc)' || echo 'No overlay/tmpfs for /etc'")
-                VIRT_ARGS+=("--run-command" "echo '=== Filesystem type ===' && df -T /etc | tail -1")
-                VIRT_ARGS+=("--run-command" "echo '=== /etc attributes ===' && lsattr -d /etc 2>&1 || echo 'lsattr not available'")
                 VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/tmp/resolv.conf")
-                # Try creating in both locations atomically and show all output
-                VIRT_ARGS+=("--run-command" "{ cp -v /tmp/resolv.conf /etc/resolv.conf && echo 'SUCCESS: /etc/resolv.conf created'; } || echo 'FAILED: /etc/resolv.conf'; { cp -v /tmp/resolv.conf /usr/etc/resolv.conf && echo 'SUCCESS: /usr/etc/resolv.conf created'; } || echo 'FAILED: /usr/etc/resolv.conf'")
-                VIRT_ARGS+=("--run-command" "echo '=== Files ===' && ls -l /etc/resolv.conf /usr/etc/resolv.conf 2>&1")
+                # Create resolv.conf with sync to force filesystem writeback
+                VIRT_ARGS+=("--run-command" "cp /tmp/resolv.conf /etc/resolv.conf && sync && stat /etc/resolv.conf && cat /etc/resolv.conf")
             fi
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
