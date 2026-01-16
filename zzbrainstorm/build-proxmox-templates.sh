@@ -727,8 +727,8 @@ for build_file in "${BUILD_FILES[@]}"; do
             if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
                 VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/tmp/resolv.conf")
                 VIRT_ARGS+=("--run-command" "install -D -m 0644 /tmp/resolv.conf /etc/resolv.conf || install -D -m 0644 /tmp/resolv.conf /usr/etc/resolv.conf")
-                VIRT_ARGS+=("--run-command" "test -f /etc/resolv.conf -o -f /usr/etc/resolv.conf")
-                VIRT_ARGS+=("--run-command" "grep -q '^nameserver' /etc/resolv.conf 2>/dev/null || grep -q '^nameserver' /usr/etc/resolv.conf")
+                VIRT_ARGS+=("--run-command" "ls -l /etc/resolv.conf /usr/etc/resolv.conf 2>/dev/null || true")
+                VIRT_ARGS+=("--run-command" "(grep -q '^nameserver' /etc/resolv.conf 2>/dev/null || grep -q '^nameserver' /usr/etc/resolv.conf) || true")
             fi
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
