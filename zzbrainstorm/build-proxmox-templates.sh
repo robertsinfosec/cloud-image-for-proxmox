@@ -727,13 +727,13 @@ for build_file in "${BUILD_FILES[@]}"; do
             if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
                 VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/tmp/resolv.conf")
                 VIRT_ARGS+=("--run-command" "cp /tmp/resolv.conf /etc/resolv.conf && sync")
-                # Bring up network and test connectivity
+                # Bring up network
                 VIRT_ARGS+=("--run-command" "ip link set eth0 up && dhclient eth0 && sleep 1")
-                VIRT_ARGS+=("--run-command" "ping -c 2 169.254.2.2 && echo 'Gateway is reachable'")
-                VIRT_ARGS+=("--run-command" "echo 'nameserver 169.254.2.2' > /etc/resolv.conf")
-                # Test if we can reach external IPs through the gateway (bypassing DNS)
-                VIRT_ARGS+=("--run-command" "ping -c 2 1.1.1.1 && echo 'Can reach 1.1.1.1 via gateway' || echo 'Cannot reach external IPs'")
-                VIRT_ARGS+=("--run-command" "nslookup mirrors.almalinux.org 169.254.2.2 || dig @169.254.2.2 mirrors.almalinux.org || echo 'Gateway DNS not working'")
+                # Test DNS with getent and curl
+                VIRT_ARGS+=("--run-command" "echo 'nameserver 169.254.2.2' > /etc/resolv.conf && cat /etc/resolv.conf")
+                VIRT_ARGS+=("--run-command" "getent hosts mirrors.almalinux.org || echo 'getent DNS failed'")
+                VIRT_ARGS+=("--run-command" "curl -v --connect-timeout 5 http://1.1.1.1 2>&1 | head -5 || echo 'curl to IP works'")
+                VIRT_ARGS+=("--run-command" "curl -v --connect-timeout 5 http://mirrors.almalinux.org 2>&1 | head -10 || echo 'curl to hostname failed'")
             fi
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
