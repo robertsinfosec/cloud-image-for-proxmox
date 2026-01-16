@@ -306,13 +306,31 @@ check_libguestfs_dns() {
     fi
 
     prepare_libguestfs_resolv
-    if ! LIBGUESTFS_BACKEND=direct libguestfs-test-tool -t network >/dev/null 2>&1; then
-        setStatus "libguestfs network test failed" "f"
-        echo "ERROR: libguestfs appliance cannot reach the network/DNS."
-        echo "Fix host firewall/DNS so the libguestfs appliance can resolve ${test_host}."
-        exit 1
+    local timeout_cmd=""
+    if command -v timeout >/dev/null 2>&1; then
+        timeout_cmd="timeout 30"
     fi
-    setStatus "libguestfs network test OK" "s"
+
+    local attempt
+    for attempt in 1 2 3; do
+        if [[ -n "$timeout_cmd" ]]; then
+            if LIBGUESTFS_BACKEND=direct $timeout_cmd libguestfs-test-tool -t network >/dev/null 2>&1; then
+                setStatus "libguestfs network test OK" "s"
+                return 0
+            fi
+        else
+            if LIBGUESTFS_BACKEND=direct libguestfs-test-tool -t network >/dev/null 2>&1; then
+                setStatus "libguestfs network test OK" "s"
+                return 0
+            fi
+        fi
+        setStatus "libguestfs network test failed (attempt ${attempt}/3)" "f"
+        sleep 2
+    done
+
+    echo "ERROR: libguestfs appliance cannot reach the network/DNS."
+    echo "Fix host firewall/DNS so the libguestfs appliance can resolve ${test_host}."
+    exit 1
 }
 
 collect_build_meta() {
