@@ -3,6 +3,8 @@
 # Copy any subsection under `defaults` into a build's `override` block.
 
 defaults:
+  storage: SSD-1A
+
   cloud_init:
     user: sysadmin
     password_file: /root/.ci_pass

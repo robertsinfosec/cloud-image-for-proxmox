@@ -36,12 +36,12 @@ This folder is a mock-up of a unified entrypoint + per-distro configs + batch bu
 
 Each entry must include:
 - `vmid`
-- `storage`
 - `distro`
 - `release` (codename or version)
 - `version` (numeric version string; used for naming)
 
 Optional:
+- `override.storage` (defaults to `defaults.storage`)
 - `notes`
 - `override` (same structure as defaults)
 

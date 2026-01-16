@@ -4,14 +4,12 @@
 builds:
   # Minimal required fields example
   - vmid: 609000
-    storage: SSD-03A
     distro: centos
     release: "9"
     version: "9"
     notes: "CentOS Stream 9 (GenericCloud)"
 
   - vmid: 608000
-    storage: SSD-03A
     distro: centos
     release: "8"
     version: "8"

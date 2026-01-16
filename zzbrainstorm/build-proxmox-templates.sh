@@ -379,6 +379,7 @@ NO_SYSLOG=$(yq_read ".defaults.behavior.no_syslog" "$DEFAULTS_FILE")
 echo -e "${LightPurple}$Name $Version${NC}"
 echo ""
 
+DEFAULT_STORAGE=$(yq_read ".defaults.storage" "$DEFAULTS_FILE")
 DEFAULT_CI_USER=$(yq_read ".defaults.cloud_init.user" "$DEFAULTS_FILE")
 DEFAULT_CI_PASSWORD_FILE=$(yq_read ".defaults.cloud_init.password_file" "$DEFAULTS_FILE")
 DEFAULT_SEARCH_DOMAIN=$(yq_read ".defaults.cloud_init.search_domain" "$DEFAULTS_FILE")
@@ -420,7 +421,6 @@ for build_file in "${BUILD_FILES[@]}"; do
         release=$(yq_read ".builds[$i].release" "$build_file")
         version=$(yq_read ".builds[$i].version" "$build_file")
         vmid=$(yq_read ".builds[$i].vmid" "$build_file")
-        storage=$(yq_read ".builds[$i].storage" "$build_file")
 
         if [[ -z "$version" || "$version" == "null" ]]; then
             version=""
@@ -459,6 +459,8 @@ for build_file in "${BUILD_FILES[@]}"; do
         SSH_KEYS_ID=$(resolve_value "$build_file" "$i" "cloud_init.ssh_keys_id" "$DEFAULT_SSH_KEYS_ID")
         SSH_KEYS_FILE=$(resolve_value "$build_file" "$i" "cloud_init.ssh_keys_file" "$DEFAULT_SSH_KEYS_FILE")
         SSH_KEYS_URL=$(resolve_value "$build_file" "$i" "cloud_init.ssh_keys_url" "$DEFAULT_SSH_KEYS_URL")
+
+        storage=$(resolve_value "$build_file" "$i" "storage" "$DEFAULT_STORAGE")
 
         CORES=$(resolve_value "$build_file" "$i" "vm.cores" "$DEFAULT_CORES")
         MEMORY=$(resolve_value "$build_file" "$i" "vm.memory" "$DEFAULT_MEMORY")

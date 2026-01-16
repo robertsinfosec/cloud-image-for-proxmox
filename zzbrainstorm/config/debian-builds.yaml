@@ -5,21 +5,18 @@
 builds:
   # Minimal required fields example
   - vmid: 401300
-    storage: SSD-03A
     distro: debian
     release: trixie
     version: "13"
     notes: "Debian 13 (Trixie)"
 
   - vmid: 401200
-    storage: SSD-03A
     distro: debian
     release: bookworm
     version: "12"
     notes: "Debian 12 (Bookworm)"
 
   - vmid: 401100
-    storage: SSD-03A
     distro: debian
     release: bullseye
     version: "11"

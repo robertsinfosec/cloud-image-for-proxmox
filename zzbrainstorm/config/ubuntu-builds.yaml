@@ -5,20 +5,17 @@
 builds:
   # Minimal required fields example (using release)
   - vmid: 302404
-    storage: SSD-03A
     distro: ubuntu
     release: noble
     notes: "Ubuntu 24.04 LTS (Noble Numbat)"
 
   # Minimal required fields example (using version)
   - vmid: 302204
-    storage: SSD-03A
     distro: ubuntu
     version: "22.04"
     notes: "Ubuntu 22.04 LTS (Jammy Jellyfish)"
 
   - vmid: 302004
-    storage: SSD-03A
     distro: ubuntu
     release: focal
     notes: "Ubuntu 20.04 LTS (Focal Fossa)"
