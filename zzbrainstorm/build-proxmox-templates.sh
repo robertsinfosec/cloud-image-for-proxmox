@@ -82,11 +82,51 @@ check_command() {
 
 check_yq() {
     if ! command -v yq >/dev/null 2>&1; then
-        echo "ERROR: 'yq' is required to parse YAML."
-        echo "Install examples:"
-        echo "  Debian/Ubuntu: apt-get install yq"
-        echo "  RHEL/Rocky/Alma: dnf install yq"
-        echo "  openSUSE: zypper install yq"
+        if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
+            echo "ERROR: 'yq' is required to parse YAML."
+            echo "Install mikefarah/yq v4 or run without --non-interactive to install it."
+            exit 1
+        fi
+
+        echo "Utility 'yq' is required to parse YAML."
+        read -r -p "Install mikefarah/yq v4 now? [y/N]: " reply
+        if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
+            echo "ERROR: 'yq' not installed."
+            exit 1
+        fi
+
+        if ! command -v wget >/dev/null 2>&1; then
+            echo "ERROR: 'wget' is required to install yq."
+            exit 1
+        fi
+
+        local version="v4.2.0"
+        local platform
+        case "$(uname -m)" in
+            x86_64) platform="linux_amd64" ;;
+            aarch64|arm64) platform="linux_arm64" ;;
+            *)
+                echo "ERROR: Unsupported architecture for automatic yq install: $(uname -m)"
+                exit 1
+                ;;
+        esac
+
+        local url="https://github.com/mikefarah/yq/releases/download/${version}/yq_${platform}"
+        echo "Installing yq from: $url"
+        if wget "$url" -O /usr/local/bin/yq; then
+            chmod +x /usr/local/bin/yq
+        else
+            echo "ERROR: Failed to download yq."
+            exit 1
+        fi
+    fi
+
+    local yq_version
+    yq_version=$(yq --version 2>/dev/null || true)
+    if [[ "$yq_version" != *"mikefarah"* && "$yq_version" != *"version 4"* ]]; then
+        echo "ERROR: This script requires mikefarah/yq v4 (supports 'yq eval -r')."
+        echo "The detected 'yq' appears to be the Python wrapper."
+        echo "Install mikefarah/yq v4 and ensure it is first in PATH."
         exit 1
     fi
 }
@@ -94,10 +134,7 @@ check_yq() {
 check_libguestfs() {
     if ! command -v virt-customize >/dev/null 2>&1; then
         echo "ERROR: 'virt-customize' is required (libguestfs-tools)."
-        echo "Install examples:"
-        echo "  Debian/Ubuntu: apt-get install libguestfs-tools"
-        echo "  RHEL/Rocky/Alma: dnf install libguestfs-tools"
-        echo "  openSUSE: zypper install libguestfs-tools"
+        echo "Install: apt-get install libguestfs-tools"
         exit 1
     fi
 }

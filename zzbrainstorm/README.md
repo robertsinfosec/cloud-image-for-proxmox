@@ -45,6 +45,12 @@ Optional:
 - `notes`
 - `override` (same structure as defaults)
 
+## Password file format
+
+The `cloud_init.password_file` value must point to a file that contains the
+cleartext password only (no `key=value` format). The script reads the entire
+file as the password and enforces secure file permissions.
+
 ## Dependencies
 
 - `yq` (YAML parsing)
