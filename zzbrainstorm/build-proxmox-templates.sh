@@ -141,7 +141,9 @@ check_libguestfs() {
 
 check_dhcpcd() {
     # Check if dhcpcd (DHCP client) is available for libguestfs appliance
-    if ! dpkg -l | grep -qE '^ii\s+(dhcpcd-base|dhcpcd5|isc-dhcp-client)'; then
+    if ! dpkg-query -W -f='${Status}' dhcpcd-base 2>/dev/null | grep -q "install ok installed" && \
+       ! dpkg-query -W -f='${Status}' dhcpcd5 2>/dev/null | grep -q "install ok installed" && \
+       ! dpkg-query -W -f='${Status}' isc-dhcp-client 2>/dev/null | grep -q "install ok installed"; then
         if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
             echo "ERROR: A DHCP client is required for libguestfs networking."
             echo "libguestfs needs dhcpcd-base (or dhclient) to configure network access inside the appliance."
