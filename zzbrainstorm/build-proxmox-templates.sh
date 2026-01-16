@@ -291,12 +291,20 @@ collect_build_meta() {
     fi
 
     if [[ -z "$BUILD_RELEASE" || "$BUILD_RELEASE" == "null" ]]; then
-        echo "ERROR: Missing release in $build_file (index $build_index)."
+        BUILD_RELEASE=""
+    fi
+
+    if [[ -z "$BUILD_VERSION" && -z "$BUILD_RELEASE" ]]; then
+        echo "ERROR: Missing release and version in $build_file (index $build_index)."
         return 1
     fi
 
     if [[ -z "$BUILD_VERSION" ]]; then
         BUILD_VERSION="$BUILD_RELEASE"
+    fi
+
+    if [[ -z "$BUILD_RELEASE" ]]; then
+        BUILD_RELEASE="$BUILD_VERSION"
     fi
 
     if [[ -z "$BUILD_DISTRO" || -z "$BUILD_VMID" ]]; then
