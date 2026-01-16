@@ -725,6 +725,7 @@ for build_file in "${BUILD_FILES[@]}"; do
             if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
                 VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/etc/resolv.conf")
                 VIRT_ARGS+=("--run-command" "chmod 0644 /etc/resolv.conf")
+                VIRT_ARGS+=("--run-command" "grep -q '^nameserver' /etc/resolv.conf")
             fi
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
