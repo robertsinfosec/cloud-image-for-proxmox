@@ -7,17 +7,17 @@ builds:
   - vmid: 923000
     distro: alpine
     release: "3.23"
-    version: "3.23"
+    version: "3.23.0"
     notes: "Alpine 3.23 (NoCloud x86_64 BIOS cloud-init)"
 
   - vmid: 922000
     distro: alpine
     release: "3.22"
-    version: "3.22"
+    version: "3.22.0"
     notes: "Alpine 3.22 (NoCloud x86_64 BIOS cloud-init)"
 
   - vmid: 921000
     distro: alpine
     release: "3.21"
-    version: "3.21"
+    version: "3.21.0"
     notes: "Alpine 3.21 (NoCloud x86_64 BIOS cloud-init)"
