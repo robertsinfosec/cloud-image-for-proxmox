@@ -518,7 +518,7 @@ setStatus "Scanning build files" "*"
 BUILD_FILES=()
 while IFS= read -r -d '' file; do
     BUILD_FILES+=("$file")
-done < <(find "$CONFIG_DIR" -maxdepth 1 -type f -name "*-builds.yaml" ! -name "*.disabled" -print0)
+done < <(find "$CONFIG_DIR" -maxdepth 1 -type f -name "*-builds.yaml" ! -name "*.disabled" -print0 | sort -z)
 
 if [[ ${#BUILD_FILES[@]} -eq 0 ]]; then
     echo "ERROR: No build files found in $CONFIG_DIR"
@@ -726,7 +726,8 @@ for build_file in "${BUILD_FILES[@]}"; do
             prepare_libguestfs_resolv
             if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
                 VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/tmp/resolv.conf")
-                VIRT_ARGS+=("--run-command" "install -D -m 0644 /tmp/resolv.conf /etc/resolv.conf")
+                VIRT_ARGS+=("--run-command" "mkdir -p /etc")
+                VIRT_ARGS+=("--run-command" "cp /tmp/resolv.conf /etc/resolv.conf")
                 VIRT_ARGS+=("--run-command" "grep -q '^nameserver' /etc/resolv.conf")
             fi
             if declare -p PKGS >/dev/null 2>&1; then
