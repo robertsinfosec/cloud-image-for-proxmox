@@ -13,8 +13,11 @@ IMAGE_PATH="${OPENSUSE_DISTRO_LABEL}_${VERSION}/images/${IMAGE_NAME_TEMPLATE}"
 SHA256SUMS_PATH="${IMAGE_PATH}.sha256"
 
 PKG_MANAGER="zypper"
-PKGS=("qemu-guest-agent" "cloud-init")
-OPTIONAL_PKGS=("firewalld" "watchdog" "fail2ban" "crowdsec")
+# openSUSE cloud images already ship with cloud-init and qemu-guest-agent.
+# Package install is skipped to avoid repo resolution failures during build.
+SKIP_PKG_INSTALL="true"
+PKGS=()
+OPTIONAL_PKGS=()
 VIRT_CUSTOMIZE_OPTS=(
   "--run-command"
   "truncate -s 0 /etc/machine-id"

@@ -646,19 +646,23 @@ for build_file in "${BUILD_FILES[@]}"; do
         fi
 
         VIRT_ARGS=()
-        if declare -p PKGS >/dev/null 2>&1; then
-            if [[ ${#PKGS[@]} -gt 0 ]]; then
-                VIRT_ARGS+=("--install" "$(IFS=,; echo "${PKGS[*]}")")
-            fi
-        fi
-
-        if declare -p OPTIONAL_PKGS >/dev/null 2>&1; then
-            if [[ ${#OPTIONAL_PKGS[@]} -gt 0 ]]; then
-                OPTIONAL_CMD=$(build_optional_install_cmd "${PKG_MANAGER:-}" "${OPTIONAL_PKGS[@]}")
-                if [[ -n "$OPTIONAL_CMD" ]]; then
-                    VIRT_ARGS+=("--run-command" "$OPTIONAL_CMD")
+        if [[ "${SKIP_PKG_INSTALL:-false}" != "true" ]]; then
+            if declare -p PKGS >/dev/null 2>&1; then
+                if [[ ${#PKGS[@]} -gt 0 ]]; then
+                    VIRT_ARGS+=("--install" "$(IFS=,; echo "${PKGS[*]}")")
                 fi
             fi
+
+            if declare -p OPTIONAL_PKGS >/dev/null 2>&1; then
+                if [[ ${#OPTIONAL_PKGS[@]} -gt 0 ]]; then
+                    OPTIONAL_CMD=$(build_optional_install_cmd "${PKG_MANAGER:-}" "${OPTIONAL_PKGS[@]}")
+                    if [[ -n "$OPTIONAL_CMD" ]]; then
+                        VIRT_ARGS+=("--run-command" "$OPTIONAL_CMD")
+                    fi
+                fi
+            fi
+        else
+            setStatus "Skipping package install per distro config" "*"
         fi
 
         if declare -p VIRT_CUSTOMIZE_OPTS >/dev/null 2>&1; then
