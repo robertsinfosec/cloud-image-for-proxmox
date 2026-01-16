@@ -312,6 +312,7 @@ check_libguestfs_dns() {
     fi
 
     local attempt
+    local attempt_delay=30
     for attempt in 1 2 3; do
         if [[ -n "$timeout_cmd" ]]; then
             if LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 $timeout_cmd libguestfs-test-tool -t network >/dev/null 2>&1; then
@@ -325,7 +326,10 @@ check_libguestfs_dns() {
             fi
         fi
         setStatus "libguestfs network test failed (attempt ${attempt}/3)" "f"
-        sleep 2
+        if [[ $attempt -lt 3 ]]; then
+            setStatus "Waiting ${attempt_delay}s before retry" "*"
+            sleep "$attempt_delay"
+        fi
     done
 
     echo "ERROR: libguestfs appliance cannot reach the network/DNS."
