@@ -725,8 +725,8 @@ for build_file in "${BUILD_FILES[@]}"; do
         if [[ "$SKIP_PKG_INSTALL_EFFECTIVE" != "true" ]]; then
             prepare_libguestfs_resolv
             if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
-                VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/etc/resolv.conf")
-                VIRT_ARGS+=("--run-command" "chmod 0644 /etc/resolv.conf")
+                VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/tmp/resolv.conf")
+                VIRT_ARGS+=("--run-command" "install -D -m 0644 /tmp/resolv.conf /etc/resolv.conf")
                 VIRT_ARGS+=("--run-command" "grep -q '^nameserver' /etc/resolv.conf")
             fi
             if declare -p PKGS >/dev/null 2>&1; then
