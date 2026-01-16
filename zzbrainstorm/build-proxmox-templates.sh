@@ -727,8 +727,10 @@ for build_file in "${BUILD_FILES[@]}"; do
             if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
                 VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/tmp/resolv.conf")
                 VIRT_ARGS+=("--run-command" "cp /tmp/resolv.conf /etc/resolv.conf && sync")
-                # Bring up network interface and get DHCP address
-                VIRT_ARGS+=("--run-command" "ip link set eth0 up && dhclient eth0 && ip addr show eth0 && ip route")
+                # Bring up network and use the libguestfs gateway for DNS queries
+                VIRT_ARGS+=("--run-command" "ip link set eth0 up && dhclient -v eth0 2>&1 | head -20 && sleep 1")
+                VIRT_ARGS+=("--run-command" "echo 'nameserver 169.254.2.2' > /etc/resolv.conf && cat /etc/resolv.conf")
+                VIRT_ARGS+=("--run-command" "ip addr show eth0 && ip route && getent hosts mirrors.almalinux.org || echo 'Still no DNS'")
             fi
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
