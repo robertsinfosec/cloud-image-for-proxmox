@@ -7,7 +7,7 @@ IMAGE_URL_BASE="https://dl-cdn.alpinelinux.org/alpine"
 # but RELEASE (e.g., 3.23) in the path.
 IMAGE_NAME_TEMPLATE="nocloud_alpine-${VERSION}-x86_64-bios-cloudinit-r0.qcow2"
 IMAGE_PATH="v${RELEASE}/releases/cloud/${IMAGE_NAME_TEMPLATE}"
-SHA256SUMS_PATH="v${RELEASE}/releases/cloud/SHA256SUMS"
+SHA256SUMS_PATH="v${RELEASE}/releases/cloud/${IMAGE_NAME_TEMPLATE}.sha512"
 
 PKG_MANAGER="apk"
 PKGS=("qemu-guest-agent" "cloud-init" "nftables" "fail2ban")
