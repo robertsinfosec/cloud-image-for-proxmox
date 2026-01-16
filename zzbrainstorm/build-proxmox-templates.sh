@@ -294,7 +294,19 @@ prepare_libguestfs_resolv() {
         done
     fi
 
-    export LIBGUESTFS_RESOLV_CONF="$resolv_source"
+    if [[ ! -f "$resolv_source" ]]; then
+        echo "ERROR: resolv.conf source not found: $resolv_source"
+        exit 1
+    fi
+
+    if [[ -z "${RESOLV_TEMP_FILE:-}" ]]; then
+        RESOLV_TEMP_FILE=$(mktemp)
+        cp "$resolv_source" "$RESOLV_TEMP_FILE"
+        chmod 0644 "$RESOLV_TEMP_FILE"
+        trap 'rm -f "$RESOLV_TEMP_FILE"' EXIT
+    fi
+
+    export LIBGUESTFS_RESOLV_CONF="$RESOLV_TEMP_FILE"
 }
 
 check_libguestfs_dns() {
@@ -308,28 +320,23 @@ check_libguestfs_dns() {
     prepare_libguestfs_resolv
     local timeout_cmd=""
     if command -v timeout >/dev/null 2>&1; then
-        timeout_cmd="timeout 30"
+        timeout_cmd="timeout 60"
     fi
 
     local attempt
-    local attempt_delay=30
     for attempt in 1 2 3; do
         if [[ -n "$timeout_cmd" ]]; then
-            if LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 $timeout_cmd libguestfs-test-tool -t network >/dev/null 2>&1; then
+            if LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 LIBGUESTFS_TIMEOUT=600 $timeout_cmd libguestfs-test-tool -t network >/dev/null 2>&1; then
                 setStatus "libguestfs network test OK" "s"
                 return 0
             fi
         else
-            if LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 libguestfs-test-tool -t network >/dev/null 2>&1; then
+            if LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 LIBGUESTFS_TIMEOUT=600 libguestfs-test-tool -t network >/dev/null 2>&1; then
                 setStatus "libguestfs network test OK" "s"
                 return 0
             fi
         fi
         setStatus "libguestfs network test failed (attempt ${attempt}/3)" "f"
-        if [[ $attempt -lt 3 ]]; then
-            setStatus "Waiting ${attempt_delay}s before retry" "*"
-            sleep "$attempt_delay"
-        fi
     done
 
     echo "ERROR: libguestfs appliance cannot reach the network/DNS."
@@ -714,6 +721,11 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         VIRT_ARGS=()
         if [[ "$SKIP_PKG_INSTALL_EFFECTIVE" != "true" ]]; then
+            prepare_libguestfs_resolv
+            if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
+                VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/etc/resolv.conf")
+                VIRT_ARGS+=("--run-command" "chmod 0644 /etc/resolv.conf")
+            fi
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
                     VIRT_ARGS+=("--install" "$(IFS=,; echo "${PKGS[*]}")")
@@ -741,7 +753,7 @@ for build_file in "${BUILD_FILES[@]}"; do
         if [[ ${#VIRT_ARGS[@]} -gt 0 ]]; then
             setStatus "Customizing image" "*"
             prepare_libguestfs_resolv
-            if ! LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 virt-customize --network -a "$WORK_IMAGE" "${VIRT_ARGS[@]}"; then
+            if ! LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 LIBGUESTFS_TIMEOUT=600 virt-customize --network -a "$WORK_IMAGE" "${VIRT_ARGS[@]}"; then
                 setStatus "Unable to customize image: $WORK_IMAGE" "f"
                 exit 1
             fi
