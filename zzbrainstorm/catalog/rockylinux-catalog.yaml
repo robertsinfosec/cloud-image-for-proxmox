@@ -1,0 +1,12 @@
+# Catalog of known Rocky Linux releases (examples)
+# Reference list of what can be built (naming/download handled in distros/).
+
+catalog:
+  - distro: rockylinux
+    release: "9"
+    version: "9"
+    notes: "Rocky Linux 9 (GenericCloud)"
+  - distro: rockylinux
+    release: "8"
+    version: "8"
+    notes: "Rocky Linux 8 (GenericCloud)"

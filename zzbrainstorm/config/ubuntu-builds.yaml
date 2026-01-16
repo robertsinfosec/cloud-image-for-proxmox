@@ -1,0 +1,46 @@
+# Batch builds (YAML)
+# Each entry overrides defaults in config/defaults.yaml
+# Use either `release` (codename) OR `version`.
+
+builds:
+  # Minimal required fields example (using release)
+  - vmid: 302404
+    storage: SSD-03A
+    distro: ubuntu
+    release: noble
+    notes: "Ubuntu 24.04 LTS (Noble Numbat)"
+
+  # Minimal required fields example (using version)
+  - vmid: 302204
+    storage: SSD-03A
+    distro: ubuntu
+    version: "22.04"
+    notes: "Ubuntu 22.04 LTS (Jammy Jellyfish)"
+
+  - vmid: 302004
+    storage: SSD-03A
+    distro: ubuntu
+    release: focal
+    notes: "Ubuntu 20.04 LTS (Focal Fossa)"
+    override:
+      cloud_init:
+        user: sysadmin
+        password_file: /root/.ci_pass
+        search_domain: lab.example.com
+        ssh_keys_id: jdoe
+      vm:
+        cores: 2
+        memory: 2048
+        disk_size: 20G
+      tags:
+        - cloud-init
+        - template
+        - ubuntu
+        - "20.04"
+      cache:
+        dir: ./cache
+        keep: true
+      behavior:
+        non_interactive: false
+        no_syslog: false
+

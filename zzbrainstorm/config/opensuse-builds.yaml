@@ -1,0 +1,25 @@
+# Batch builds (YAML)
+# Each entry overrides defaults in config/defaults.yaml
+
+builds:
+  # Minimal required fields example
+  - vmid: 815600
+    storage: SSD-03A
+    distro: opensuse
+    release: "leap"
+    version: "15.6"
+    notes: "openSUSE Leap 15.6"
+
+  - vmid: 815500
+    storage: SSD-03A
+    distro: opensuse
+    release: "leap"
+    version: "15.5"
+    notes: "openSUSE Leap 15.5"
+
+  - vmid: 815400
+    storage: SSD-03A
+    distro: opensuse
+    release: "leap"
+    version: "15.4"
+    notes: "openSUSE Leap 15.4"

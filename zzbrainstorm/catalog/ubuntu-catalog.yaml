@@ -1,0 +1,18 @@
+# Catalog of known Ubuntu releases (examples)
+# Reference list of what can be built (naming/download handled in distros/).
+# Use either `release` (codename) or `version` when selecting.
+
+catalog:
+  - distro: ubuntu
+    release: noble
+    version: "24.04"
+    notes: "Ubuntu 24.04 LTS (Noble Numbat)"
+  - distro: ubuntu
+    release: jammy
+    version: "22.04"
+    notes: "Ubuntu 22.04 LTS (Jammy Jellyfish)"
+  - distro: ubuntu
+    release: focal
+    version: "20.04"
+    notes: "Ubuntu 20.04 LTS (Focal Fossa)"
+

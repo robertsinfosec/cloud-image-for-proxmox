@@ -1,0 +1,12 @@
+# Catalog of known CentOS releases (examples)
+# Reference list of what can be built (naming/download handled in distros/).
+
+catalog:
+  - distro: centos
+    release: "9"
+    version: "9"
+    notes: "CentOS Stream 9 (GenericCloud)"
+  - distro: centos
+    release: "8"
+    version: "8"
+    notes: "CentOS Stream 8 (GenericCloud)"

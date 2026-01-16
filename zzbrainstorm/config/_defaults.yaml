@@ -1,0 +1,36 @@
+# Global defaults for the unified template builder
+# (loaded by the entrypoint, overridden by per-build `override` blocks)
+# Copy any subsection under `defaults` into a build's `override` block.
+
+defaults:
+  cloud_init:
+    user: sysadmin
+    password_file: /root/.ci_pass
+    search_domain: lab.example.com
+    ssh_keys_id: jdoe
+    ssh_keys_file: /root/.ssh/authorized_keys
+    ssh_keys_url: ""
+    ssh_keys_inline: []
+
+  vm:
+    cores: 2
+    memory: 2048
+    disk_size: 20G
+    bridge: vmbr0
+    ostype: l26
+    agent: true
+    ipconfig0: ip=dhcp
+    watchdog: i6300esb,action=reset
+
+  tags:
+    - cloud-init
+    - template
+    - cloud-image
+
+  cache:
+    dir: ./cache
+    keep: true
+
+  behavior:
+    non_interactive: false
+    no_syslog: false

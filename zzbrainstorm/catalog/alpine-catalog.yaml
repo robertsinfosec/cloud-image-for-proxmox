@@ -1,0 +1,17 @@
+# Catalog of known Alpine Linux releases (examples)
+# Alpine does not have LTS releases; use the latest three minor versions.
+# Reference list of what can be built (naming/download handled in distros/).
+
+catalog:
+  - distro: alpine
+    release: "3.23"
+    version: "3.23"
+    notes: "Alpine 3.23 (NoCloud x86_64 BIOS cloud-init)"
+  - distro: alpine
+    release: "3.22"
+    version: "3.22"
+    notes: "Alpine 3.22 (NoCloud x86_64 BIOS cloud-init)"
+  - distro: alpine
+    release: "3.21"
+    version: "3.21"
+    notes: "Alpine 3.21 (NoCloud x86_64 BIOS cloud-init)"

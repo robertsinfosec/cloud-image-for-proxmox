@@ -1,0 +1,16 @@
+# Catalog of known Oracle Linux releases (examples)
+# Reference list of what can be built (naming/download handled in distros/).
+
+catalog:
+  - distro: oraclelinux
+    release: "9"
+    version: "9"
+    notes: "Oracle Linux 9 (GenericCloud)"
+  - distro: oraclelinux
+    release: "8"
+    version: "8"
+    notes: "Oracle Linux 8 (GenericCloud)"
+  - distro: oraclelinux
+    release: "7"
+    version: "7"
+    notes: "Oracle Linux 7 (GenericCloud)"

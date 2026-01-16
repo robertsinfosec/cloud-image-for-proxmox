@@ -1,0 +1,12 @@
+# Catalog of known AlmaLinux releases (examples)
+# Reference list of what can be built (naming/download handled in distros/).
+
+catalog:
+  - distro: almalinux
+    release: "9"
+    version: "9"
+    notes: "AlmaLinux 9 (GenericCloud)"
+  - distro: almalinux
+    release: "8"
+    version: "8"
+    notes: "AlmaLinux 8 (GenericCloud)"

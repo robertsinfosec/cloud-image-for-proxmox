@@ -1,0 +1,16 @@
+# Catalog of known openSUSE releases (examples)
+# Reference list of what can be built (naming/download handled in distros/).
+
+catalog:
+  - distro: opensuse
+    release: "leap"
+    version: "15.6"
+    notes: "openSUSE Leap 15.6"
+  - distro: opensuse
+    release: "leap"
+    version: "15.5"
+    notes: "openSUSE Leap 15.5"
+  - distro: opensuse
+    release: "leap"
+    version: "15.4"
+    notes: "openSUSE Leap 15.4"

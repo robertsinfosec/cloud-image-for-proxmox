@@ -1,0 +1,16 @@
+# Catalog of known Debian releases (examples)
+# Reference list of what can be built (naming/download handled in distros/).
+
+catalog:
+  - distro: debian
+    release: trixie
+    version: "13"
+    notes: "Debian 13 (Trixie)"
+  - distro: debian
+    release: bookworm
+    version: "12"
+    notes: "Debian 12 (Bookworm)"
+  - distro: debian
+    release: bullseye
+    version: "11"
+    notes: "Debian 11 (Bullseye)"

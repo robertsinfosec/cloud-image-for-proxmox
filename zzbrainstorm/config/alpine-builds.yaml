@@ -1,0 +1,26 @@
+# Batch builds (YAML)
+# Each entry overrides defaults in config/defaults.yaml
+# Alpine does not have LTS releases; use the latest three minor versions.
+
+builds:
+  # Minimal required fields example
+  - vmid: 923000
+    storage: SSD-03A
+    distro: alpine
+    release: "3.23"
+    version: "3.23"
+    notes: "Alpine 3.23 (NoCloud x86_64 BIOS cloud-init)"
+
+  - vmid: 922000
+    storage: SSD-03A
+    distro: alpine
+    release: "3.22"
+    version: "3.22"
+    notes: "Alpine 3.22 (NoCloud x86_64 BIOS cloud-init)"
+
+  - vmid: 921000
+    storage: SSD-03A
+    distro: alpine
+    release: "3.21"
+    version: "3.21"
+    notes: "Alpine 3.21 (NoCloud x86_64 BIOS cloud-init)"
