@@ -314,12 +314,12 @@ check_libguestfs_dns() {
     local attempt
     for attempt in 1 2 3; do
         if [[ -n "$timeout_cmd" ]]; then
-            if LIBGUESTFS_BACKEND=direct $timeout_cmd libguestfs-test-tool -t network >/dev/null 2>&1; then
+            if LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 $timeout_cmd libguestfs-test-tool -t network >/dev/null 2>&1; then
                 setStatus "libguestfs network test OK" "s"
                 return 0
             fi
         else
-            if LIBGUESTFS_BACKEND=direct libguestfs-test-tool -t network >/dev/null 2>&1; then
+            if LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 libguestfs-test-tool -t network >/dev/null 2>&1; then
                 setStatus "libguestfs network test OK" "s"
                 return 0
             fi
@@ -737,7 +737,7 @@ for build_file in "${BUILD_FILES[@]}"; do
         if [[ ${#VIRT_ARGS[@]} -gt 0 ]]; then
             setStatus "Customizing image" "*"
             prepare_libguestfs_resolv
-            if ! virt-customize --network -a "$WORK_IMAGE" "${VIRT_ARGS[@]}"; then
+            if ! LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 virt-customize --network -a "$WORK_IMAGE" "${VIRT_ARGS[@]}"; then
                 setStatus "Unable to customize image: $WORK_IMAGE" "f"
                 exit 1
             fi
