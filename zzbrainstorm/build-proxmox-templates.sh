@@ -726,11 +726,17 @@ for build_file in "${BUILD_FILES[@]}"; do
             prepare_libguestfs_resolv
             if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
                 VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/tmp/resolv.conf")
+                # Diagnose /etc structure
+                VIRT_ARGS+=("--run-command" "echo '=== Checking /etc status ===' && ls -ld /etc && file /etc || true")
+                VIRT_ARGS+=("--run-command" "echo '=== Checking /etc/resolv.conf ===' && ls -l /etc/resolv.conf 2>&1 || echo '/etc/resolv.conf does not exist'")
+                VIRT_ARGS+=("--run-command" "echo '=== Testing write to /etc ===' && touch /etc/test-write && rm -f /etc/test-write && echo '/etc is writable' || echo '/etc is NOT writable'")
+                # Try to create resolv.conf
                 VIRT_ARGS+=("--run-command" "rm -f /etc/resolv.conf /usr/etc/resolv.conf || true")
-                VIRT_ARGS+=("--run-command" "install -D -m 0644 /tmp/resolv.conf /etc/resolv.conf")
-                VIRT_ARGS+=("--run-command" "install -D -m 0644 /tmp/resolv.conf /usr/etc/resolv.conf || true")
-                VIRT_ARGS+=("--run-command" "ls -l /etc/resolv.conf /usr/etc/resolv.conf 2>/dev/null || true")
-                VIRT_ARGS+=("--run-command" "(grep -q '^nameserver' /etc/resolv.conf 2>/dev/null || grep -q '^nameserver' /usr/etc/resolv.conf) || true")
+                VIRT_ARGS+=("--run-command" "mkdir -p /etc && cp /tmp/resolv.conf /etc/resolv.conf && echo 'Created /etc/resolv.conf' || echo 'FAILED to create /etc/resolv.conf'")
+                VIRT_ARGS+=("--run-command" "mkdir -p /usr/etc && cp /tmp/resolv.conf /usr/etc/resolv.conf || true")
+                # Verify creation
+                VIRT_ARGS+=("--run-command" "echo '=== Verification ===' && ls -l /etc/resolv.conf /usr/etc/resolv.conf 2>&1 || true")
+                VIRT_ARGS+=("--run-command" "echo '=== Content check ===' && cat /etc/resolv.conf 2>&1 || cat /usr/etc/resolv.conf 2>&1 || echo 'No resolv.conf found'")
             fi
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
