@@ -3,6 +3,8 @@
 # Alpine does not have LTS releases; use the latest three minor versions.
 
 builds:
+  # Alpine cloud images use the full VERSION (e.g., 3.23.0) in the filename
+  # but RELEASE (e.g., 3.23) in the path.
   # Minimal required fields example
   - vmid: 923000
     distro: alpine

@@ -288,8 +288,11 @@ get_hash_command() {
     local hash_type=${2:-""}
 
     if [[ -z "$hash_type" ]]; then
-        if [[ "$hash_path" == *"SHA512"* ]]; then
+        local hash_path_lower=$(echo "$hash_path" | tr '[:upper:]' '[:lower:]')
+        if [[ "$hash_path_lower" == *"sha512"* ]] || [[ "$hash_path_lower" == *".sha512"* ]]; then
             hash_type="sha512"
+        elif [[ "$hash_path_lower" == *"sha256"* ]] || [[ "$hash_path_lower" == *".sha256"* ]]; then
+            hash_type="sha256"
         else
             hash_type="sha256"
         fi
