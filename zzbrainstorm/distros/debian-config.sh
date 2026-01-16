@@ -8,7 +8,7 @@ IMAGE_PATH="${RELEASE_LOWER}/latest/${IMAGE_NAME_TEMPLATE}"
 SHA256SUMS_PATH="${RELEASE_LOWER}/latest/SHA512SUMS"
 
 PKG_MANAGER="apt"
-PKGS=("qemu-guest-agent" "cloud-init" "ufw" "watchdog" "fail2ban")
+PKGS=("qemu-guest-agent" "cloud-init" "ufw" "watchdog")
 VIRT_CUSTOMIZE_OPTS=(
   "--run-command"
   "truncate -s 0 /etc/machine-id"
