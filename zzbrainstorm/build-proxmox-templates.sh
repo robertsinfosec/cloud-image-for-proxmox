@@ -561,10 +561,12 @@ if [[ ${#PLANNED_BUILDS[@]} -eq 0 ]]; then
     exit 1
 fi
 
-setStatus "Planned builds:" "*"
+setStatus "Planned builds: ${#PLANNED_BUILDS[@]} template(s)" "*"
+index=1
 for entry in "${PLANNED_BUILDS[@]}"; do
     IFS='|' read -r distro version release vmid storage <<< "$entry"
-    echo "  - ${distro} ${version} (${release}) VMID ${vmid} storage ${storage}"
+    echo "  ${index}) ${distro} ${version} (${release}) VMID ${vmid} storage ${storage}"
+    index=$((index + 1))
 done
 echo ""
 
@@ -619,6 +621,10 @@ for build_file in "${BUILD_FILES[@]}"; do
         CACHE_KEEP=$(resolve_bool "$build_file" "$i" "cache.keep" "$DEFAULT_CACHE_KEEP")
         NON_INTERACTIVE=$(resolve_bool "$build_file" "$i" "behavior.non_interactive" "$DEFAULT_NON_INTERACTIVE")
 
+        if [[ "$CACHE_DIR" != /* ]]; then
+            CACHE_DIR="$CONFIG_ROOT/$CACHE_DIR"
+        fi
+
         ensure_password_file_secure "$CI_PASSWORD_FILE"
         CI_PASSWORD=$(<"$CI_PASSWORD_FILE")
 
@@ -637,9 +643,6 @@ for build_file in "${BUILD_FILES[@]}"; do
         source "$DISTROS_DIR/${distro}-config.sh"
 
         SKIP_PKG_INSTALL_EFFECTIVE="${SKIP_PKG_INSTALL:-false}"
-        if [[ "$distro" == "opensuse" ]]; then
-            SKIP_PKG_INSTALL_EFFECTIVE="true"
-        fi
         SKIP_PKG_INSTALL_EFFECTIVE=$(echo "$SKIP_PKG_INSTALL_EFFECTIVE" | awk '{print tolower($0)}')
 
         IMAGE_URL="${IMAGE_URL_BASE%/}/${IMAGE_PATH#/}"
@@ -920,7 +923,7 @@ for build_file in "${BUILD_FILES[@]}"; do
         echo "======================================================================"
         echo "T E M P L A T E  C O N F I G"
         echo "======================================================================"
-        qm config "$vmid" | grep -v sshkeys | column -t -s' '
+        qm config "$vmid" | grep -v sshkeys
         echo ""
         echo "======================================================================"
         echo "D I S K  S P A C E"
