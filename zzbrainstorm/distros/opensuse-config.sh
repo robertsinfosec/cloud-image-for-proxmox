@@ -1,10 +1,10 @@
 # openSUSE distro config (sourced by entrypoint)
 
 DISTRO_NAME="opensuse"
-IMAGE_URL_BASE="https://download.opensuse.org/repositories/Cloud:/Images:/"
+IMAGE_URL_BASE="https://download.opensuse.org/repositories/Cloud:/Images:"
 OPENSUSE_DISTRO=$(echo "$RELEASE" | awk '{print tolower($0)}')
-IMAGE_NAME_TEMPLATE="openSUSE-Leap-${VERSION}.x86_64-NoCloud.qcow2"
-IMAGE_PATH="openSUSE_Leap_${VERSION}/images/${IMAGE_NAME_TEMPLATE}"
+IMAGE_NAME_TEMPLATE="openSUSE-${OPENSUSE_DISTRO}-${VERSION}.x86_64-NoCloud.qcow2"
+IMAGE_PATH="${OPENSUSE_DISTRO}_${VERSION}/images/${IMAGE_NAME_TEMPLATE}"
 SHA256SUMS_PATH="${IMAGE_PATH}.sha256"
 
 PKG_MANAGER="zypper"
