@@ -39,7 +39,7 @@ usage() {
 
 setStatus() {
     local description=$1
-    local severity=$2
+    local severity=${2:-"*"}
 
     if [[ "${NO_SYSLOG:-false}" != "true" ]]; then
         logger "$Name $Version: [${severity}] $description"
@@ -277,6 +277,44 @@ extract_hash_from_file() {
     return 1
 }
 
+prepare_libguestfs_resolv() {
+    local resolv_source="/etc/resolv.conf"
+    local fallback_files=(
+        "/run/systemd/resolve/resolv.conf"
+        "/run/resolvconf/resolv.conf"
+        "/etc/resolv.conf"
+    )
+
+    if grep -qE "^nameserver\s+127\." /etc/resolv.conf 2>/dev/null; then
+        for candidate in "${fallback_files[@]}"; do
+            if [[ -f "$candidate" ]] && grep -qE "^nameserver\s+" "$candidate" && ! grep -qE "^nameserver\s+127\." "$candidate"; then
+                resolv_source="$candidate"
+                break
+            fi
+        done
+    fi
+
+    export LIBGUESTFS_RESOLV_CONF="$resolv_source"
+}
+
+check_libguestfs_dns() {
+    local test_host="download.opensuse.org"
+    setStatus "Checking libguestfs DNS resolution" "*"
+    if ! libguestfs-test-tool >/dev/null 2>&1; then
+        setStatus "libguestfs-test-tool not available; skipping DNS check" "*"
+        return 0
+    fi
+
+    prepare_libguestfs_resolv
+    if ! LIBGUESTFS_BACKEND=direct libguestfs-test-tool -t network >/dev/null 2>&1; then
+        setStatus "libguestfs network test failed" "f"
+        echo "ERROR: libguestfs appliance cannot reach the network/DNS."
+        echo "Fix host firewall/DNS so the libguestfs appliance can resolve ${test_host}."
+        exit 1
+    fi
+    setStatus "libguestfs network test OK" "s"
+}
+
 collect_build_meta() {
     local build_file=$1
     local build_index=$2
@@ -422,6 +460,7 @@ check_command wget "Install wget and retry."
 check_command qm "This script must be run on a Proxmox host."
 check_command pvesm "This script must be run on a Proxmox host."
 check_libguestfs
+check_libguestfs_dns
 setStatus "Runtime prerequisites OK" "s"
 
 NO_SYSLOG=$(yq_read ".defaults.behavior.no_syslog" "$DEFAULTS_FILE")
@@ -679,7 +718,8 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         if [[ ${#VIRT_ARGS[@]} -gt 0 ]]; then
             setStatus "Customizing image" "*"
-            if ! virt-customize -a "$WORK_IMAGE" "${VIRT_ARGS[@]}"; then
+            prepare_libguestfs_resolv
+            if ! virt-customize --network -a "$WORK_IMAGE" "${VIRT_ARGS[@]}"; then
                 setStatus "Unable to customize image: $WORK_IMAGE" "f"
                 exit 1
             fi
