@@ -434,31 +434,7 @@ matches_filter() {
     return 1
 }
 
-build_optional_install_cmd() {
-    local manager=$1
-    shift
-    local pkgs=("$@")
-    local joined
-    joined=$(printf "%s " "${pkgs[@]}")
 
-    case "$manager" in
-        apt)
-            echo "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${joined} || true"
-            ;;
-        dnf)
-            echo "dnf -y install ${joined} || true"
-            ;;
-        zypper)
-            echo "zypper -n in ${joined} || true"
-            ;;
-        apk)
-            echo "apk add --no-cache ${joined} || true"
-            ;;
-        *)
-            echo ""
-            ;;
-    esac
-}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -753,15 +729,6 @@ for build_file in "${BUILD_FILES[@]}"; do
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
                     VIRT_ARGS+=("--install" "$(IFS=,; echo "${PKGS[*]}")")
-                fi
-            fi
-
-            if declare -p OPTIONAL_PKGS >/dev/null 2>&1; then
-                if [[ ${#OPTIONAL_PKGS[@]} -gt 0 ]]; then
-                    OPTIONAL_CMD=$(build_optional_install_cmd "${PKG_MANAGER:-}" "${OPTIONAL_PKGS[@]}")
-                    if [[ -n "$OPTIONAL_CMD" ]]; then
-                        VIRT_ARGS+=("--run-command" "$OPTIONAL_CMD")
-                    fi
                 fi
             fi
         else

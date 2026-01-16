@@ -15,8 +15,7 @@ IMAGE_PATH="${RELEASE_STREAM}/x86_64/images/${IMAGE_NAME_TEMPLATE}"
 SHA256SUMS_PATH="${RELEASE_STREAM}/x86_64/images/CHECKSUM"
 
 PKG_MANAGER="dnf"
-PKGS=("epel-release" "qemu-guest-agent" "cloud-init" "firewalld" "watchdog")
-OPTIONAL_PKGS=("fail2ban" "crowdsec")
+PKGS=("epel-release" "qemu-guest-agent" "cloud-init" "firewalld" "watchdog" "fail2ban")
 VIRT_CUSTOMIZE_OPTS=(
   "--selinux-relabel"
   "--run-command"

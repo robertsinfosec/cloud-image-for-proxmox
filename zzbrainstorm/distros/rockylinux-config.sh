@@ -14,8 +14,7 @@ IMAGE_PATH="${ROCKY_BASE_VER}/images/x86_64/${IMAGE_NAME_TEMPLATE}"
 SHA256SUMS_PATH="${ROCKY_BASE_VER}/images/x86_64/CHECKSUM"
 
 PKG_MANAGER="dnf"
-PKGS=("epel-release" "qemu-guest-agent" "cloud-init" "firewalld" "watchdog")
-OPTIONAL_PKGS=("fail2ban" "crowdsec")
+PKGS=("epel-release" "qemu-guest-agent" "cloud-init" "firewalld" "watchdog" "fail2ban")
 VIRT_CUSTOMIZE_OPTS=(
   "--selinux-relabel"
   "--run-command"
