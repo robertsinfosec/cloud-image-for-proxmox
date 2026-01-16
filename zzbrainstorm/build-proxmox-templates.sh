@@ -728,6 +728,8 @@ for build_file in "${BUILD_FILES[@]}"; do
                 VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/tmp/resolv.conf")
                 # Create resolv.conf with sync to force filesystem writeback
                 VIRT_ARGS+=("--run-command" "cp /tmp/resolv.conf /etc/resolv.conf && sync && stat /etc/resolv.conf && cat /etc/resolv.conf")
+                # Test if DNS resolution actually works
+                VIRT_ARGS+=("--run-command" "getent hosts mirrors.almalinux.org || echo 'DNS resolution FAILED'")
             fi
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
