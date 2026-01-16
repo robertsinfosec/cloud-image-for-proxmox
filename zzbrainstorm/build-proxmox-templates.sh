@@ -367,17 +367,20 @@ if [[ ! -d "$DISTROS_DIR" ]]; then
     exit 1
 fi
 
+echo -e "${LightPurple}$Name $Version${NC}"
+echo ""
+setStatus "Initializing environment" "*"
+
+setStatus "Checking runtime prerequisites" "*"
 require_root
 check_yq
 check_command wget "Install wget and retry."
 check_command qm "This script must be run on a Proxmox host."
 check_command pvesm "This script must be run on a Proxmox host."
 check_libguestfs
+setStatus "Runtime prerequisites OK" "s"
 
 NO_SYSLOG=$(yq_read ".defaults.behavior.no_syslog" "$DEFAULTS_FILE")
-
-echo -e "${LightPurple}$Name $Version${NC}"
-echo ""
 
 DEFAULT_STORAGE=$(yq_read ".defaults.storage" "$DEFAULTS_FILE")
 DEFAULT_CI_USER=$(yq_read ".defaults.cloud_init.user" "$DEFAULTS_FILE")
@@ -400,6 +403,7 @@ DEFAULT_CACHE_DIR=$(yq_read ".defaults.cache.dir" "$DEFAULTS_FILE")
 DEFAULT_CACHE_KEEP=$(yq_read ".defaults.cache.keep" "$DEFAULTS_FILE")
 DEFAULT_NON_INTERACTIVE=$(yq_read ".defaults.behavior.non_interactive" "$DEFAULTS_FILE")
 
+setStatus "Scanning build files" "*"
 BUILD_FILES=()
 while IFS= read -r -d '' file; do
     BUILD_FILES+=("$file")
@@ -409,6 +413,7 @@ if [[ ${#BUILD_FILES[@]} -eq 0 ]]; then
     echo "ERROR: No build files found in $CONFIG_DIR"
     exit 1
 fi
+setStatus "Found ${#BUILD_FILES[@]} build file(s)" "s"
 
 for build_file in "${BUILD_FILES[@]}"; do
     build_count=$(yq_read ".builds | length" "$build_file")
@@ -435,7 +440,7 @@ for build_file in "${BUILD_FILES[@]}"; do
             version="$release"
         fi
 
-        if [[ -z "$distro" || -z "$vmid" || -z "$storage" ]]; then
+        if [[ -z "$distro" || -z "$vmid" ]]; then
             echo "ERROR: Missing required build fields in $build_file (index $i)."
             exit 1
         fi
@@ -461,6 +466,10 @@ for build_file in "${BUILD_FILES[@]}"; do
         SSH_KEYS_URL=$(resolve_value "$build_file" "$i" "cloud_init.ssh_keys_url" "$DEFAULT_SSH_KEYS_URL")
 
         storage=$(resolve_value "$build_file" "$i" "storage" "$DEFAULT_STORAGE")
+        if [[ -z "$storage" || "$storage" == "null" ]]; then
+            echo "ERROR: Storage not set. Configure defaults.storage or override.storage."
+            exit 1
+        fi
 
         CORES=$(resolve_value "$build_file" "$i" "vm.cores" "$DEFAULT_CORES")
         MEMORY=$(resolve_value "$build_file" "$i" "vm.memory" "$DEFAULT_MEMORY")

@@ -5,21 +5,18 @@
 builds:
   # Minimal required fields example
   - vmid: 923000
-    storage: SSD-03A
     distro: alpine
     release: "3.23"
     version: "3.23"
     notes: "Alpine 3.23 (NoCloud x86_64 BIOS cloud-init)"
 
   - vmid: 922000
-    storage: SSD-03A
     distro: alpine
     release: "3.22"
     version: "3.22"
     notes: "Alpine 3.22 (NoCloud x86_64 BIOS cloud-init)"
 
   - vmid: 921000
-    storage: SSD-03A
     distro: alpine
     release: "3.21"
     version: "3.21"
