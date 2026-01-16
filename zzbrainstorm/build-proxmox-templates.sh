@@ -489,7 +489,6 @@ check_command wget "Install wget and retry."
 check_command qm "This script must be run on a Proxmox host."
 check_command pvesm "This script must be run on a Proxmox host."
 check_libguestfs
-check_libguestfs_dns
 setStatus "Runtime prerequisites OK" "s"
 
 NO_SYSLOG=$(yq_read ".defaults.behavior.no_syslog" "$DEFAULTS_FILE")
