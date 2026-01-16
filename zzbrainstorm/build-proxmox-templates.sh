@@ -726,13 +726,9 @@ for build_file in "${BUILD_FILES[@]}"; do
             prepare_libguestfs_resolv
             if [[ -n "${RESOLV_TEMP_FILE:-}" ]]; then
                 VIRT_ARGS+=("--upload" "${RESOLV_TEMP_FILE}:/tmp/resolv.conf")
-                # Create resolv.conf with sync to force filesystem writeback
                 VIRT_ARGS+=("--run-command" "cp /tmp/resolv.conf /etc/resolv.conf && sync")
-                # Diagnose network connectivity
-                VIRT_ARGS+=("--run-command" "echo '=== Network Interfaces ===' && ip addr show || ifconfig -a")
-                VIRT_ARGS+=("--run-command" "echo '=== Routing ===' && ip route || route -n")
-                VIRT_ARGS+=("--run-command" "echo '=== Can ping DNS? ===' && ping -c 2 1.1.1.1 || echo 'Cannot reach 1.1.1.1'")
-                VIRT_ARGS+=("--run-command" "echo '=== Can resolve? ===' && getent hosts mirrors.almalinux.org || echo 'DNS resolution FAILED'")
+                # Bring up network interface and get DHCP address
+                VIRT_ARGS+=("--run-command" "ip link set eth0 up && dhclient eth0 && ip addr show eth0 && ip route")
             fi
             if declare -p PKGS >/dev/null 2>&1; then
                 if [[ ${#PKGS[@]} -gt 0 ]]; then
