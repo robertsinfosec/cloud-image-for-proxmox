@@ -801,7 +801,7 @@ if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
     done
     
     if [[ ${#EXISTING_TEMPLATES[@]} -eq 0 ]]; then
-        setStatus "No matching templates found in Proxmox" "q"
+        setStatus "No matching templates found in Proxmox" "*"
         exit 0
     fi
     
