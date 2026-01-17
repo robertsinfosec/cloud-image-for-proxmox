@@ -1,6 +1,15 @@
 # Bash Script Style Guide
 
-This style guide aims to provide guidelines for writing clear and efficient scripts for our project. Following these conventions ensures that our code is not only functional but also consistent and maintainable.
+This style guide provides guidelines for writing clear, efficient, and maintainable Bash scripts for the Proxmox Automation Toolkit. Following these conventions ensures consistency and reliability across all scripts.
+
+## Project Standards
+
+**Core Principles:**
+- 🛡️ **Safety First** - Scripts should never destroy data without explicit confirmation
+- 🔁 **Idempotent** - Safe to run multiple times without adverse effects
+- 🔋 **Batteries Included** - Sensible defaults that work out of the box
+- 🧠 **Intuitive** - Behavior should match user expectations
+- 📢 **Clear Output** - User always knows what's happening
 
 ## General Practices
 
@@ -75,4 +84,10 @@ function setStatus() {
 
 ## Summary
 
-Adhering to these style guidelines will help maintain the quality and reliability of our project's scripts. Consistent formatting, comprehensive error handling, and clear output logging are keys to developing robust and user-friendly scripts.
+Adhering to these style guidelines ensures:
+- ✅ **Consistency** - All scripts follow the same patterns
+- ✅ **Reliability** - Comprehensive error handling prevents failures
+- ✅ **Maintainability** - Clear code is easy to update
+- ✅ **User-Friendly** - Colored output and clear messages help users
+
+When in doubt, look at existing scripts in `src/` as examples. Consistency with the existing codebase is key.

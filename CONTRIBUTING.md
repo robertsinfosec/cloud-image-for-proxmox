@@ -1,13 +1,27 @@
-# Contributing to Our Project
+# Contributing to Proxmox Automation Toolkit
 
-Thank you for your interest in contributing to our project! This document provides guidelines for making contributions that meet our quality standards. Please take a moment to read through these guidelines to ensure a smooth contribution process.
+Thank you for your interest in contributing! This project provides opinionated automation for Proxmox storage and cloud-init template management. We welcome contributions that improve reliability, add features, or enhance documentation.
+
+## Project Structure
+
+All source code lives in the `src/` directory:
+- `proxmox-storage.sh` - Storage discovery and provisioning
+- `proxmox-templates.sh` - Cloud-init template builder
+- `config/` - Template build configurations (YAML)
+- `distros/` - Distribution-specific configurations
+- `catalog/` - Available release catalogs
 
 ## Getting Started
 
-Before you begin, make sure you have a GitHub account and understand basic Git operations. Here are some resources to help you get started with Git and GitHub:
+Before you begin, make sure you have:
+- A GitHub account and basic Git knowledge
+- Access to a Proxmox VE test environment
+- Familiarity with Bash scripting and YAML
 
+Helpful resources:
 - [Git Documentation](https://git-scm.com/doc)
 - [GitHub Quickstart Guide](https://docs.github.com/en/get-started/quickstart)
+- [Proxmox VE Documentation](https://pve.proxmox.com/pve-docs/)
 
 ## How to Submit Changes
 
@@ -19,8 +33,8 @@ Click on the 'Fork' button at the top right of this page. This creates a copy of
 ### 2. Clone Your Fork
 On your local machine, clone the forked repository to work with the files:
 ```bash
-git clone https://github.com/your-username/project-name.git
-cd project-name
+git clone https://github.com/your-username/cloud-image-for-proxmox.git
+cd cloud-image-for-proxmox
 ```
 
 ### 3. Create a New Branch
@@ -33,10 +47,22 @@ git checkout -b your-new-branch-name
 Update existing files or add new features to the repository. Keep your changes as focused as possible. This not only makes the review process easier but also increases the chance of your pull request being accepted.
 
 #### Follow Our Coding Standards
-Ensure all code adheres to the standards outlined in our [Style Guide](STYLEGUIDE.md). This includes using proper naming conventions, commenting your code where necessary, and following the architectural layout of the project.
+Ensure all code adheres to the standards outlined in our [Style Guide](STYLE_GUIDE.md). This includes:
+- Using proper naming conventions
+- Writing idempotent scripts (safe to run multiple times)
+- Implementing comprehensive error handling
+- Using colored output for status messages
+- Commenting your code where necessary
+- Following the architectural layout of the project
 
 ### 5. Test Thoroughly
-Before submitting your changes, thoroughly test any new features or fixes. Our project strives for high-quality and reliable software, and your contributions should reflect this aim.
+Before submitting your changes, test them in a Proxmox environment:
+- **Storage scripts**: Test on systems with various disk configurations
+- **Template scripts**: Verify builds complete successfully
+- **Configuration changes**: Run `--validate` to check YAML syntax
+- **Documentation**: Ensure all examples are accurate and work as written
+
+Our project strives for production-ready reliability, and your contributions should reflect this standard.
 
 ### 6. Update Documentation
 If your changes involve user-facing features or configurations, update the relevant documentation files with clear, concise, and comprehensive details. This is crucial for ensuring all users can successfully utilize new features.
@@ -56,7 +82,38 @@ git push origin your-new-branch-name
 
 ### 9. Submit a Pull Request
 Go to your fork on GitHub, click on the ‘New pull request’ button, and select your branch. Provide a detailed description of your changes and any other relevant information to reviewers.
+## Contribution Guidelines
 
+### Code Quality
+- Follow the [Style Guide](STYLE_GUIDE.md) for all Bash scripts
+- Use `shellcheck` to validate scripts before submitting
+- Ensure scripts work on Proxmox VE 8.x and later
+- Test in clean environments (not just your customized setup)
+
+### Configuration Files
+- YAML files must pass validation (`yq` syntax check)
+- Follow existing structure and naming conventions
+- Document any new configuration options
+- Provide examples for new features
+
+### Documentation
+- Update relevant `.md` files for user-facing changes
+- Keep examples up-to-date with code changes
+- Use clear, concise language
+- Include both "quick start" and detailed explanations
+
+### What We're Looking For
+- 🎯 **Bug fixes** - Issues that affect functionality
+- ✨ **New distributions** - Support for additional Linux distros
+- 📚 **Documentation** - Improvements to clarity or completeness
+- 🚀 **Features** - Enhancements that maintain simplicity
+- 🧪 **Tests** - Validation scripts or test frameworks
+
+### What to Avoid
+- ❌ Breaking changes without discussion
+- ❌ Features that add significant complexity
+- ❌ Reformatting existing code without functional changes
+- ❌ Pull requests without testing
 ## Pull Request Review Process
 
 All pull requests undergo a review process where maintainers look at the ease of integration, completeness of contributions, and adherence to the project’s standards. We aim to review contributions within one week of submission.
