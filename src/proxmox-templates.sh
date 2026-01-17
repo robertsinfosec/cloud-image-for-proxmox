@@ -1089,7 +1089,7 @@ if [[ "$STATUS" == "true" ]]; then
         exit 1
     fi
     
-    # Collect all configured templates
+    # Collect all configured templates (without storage info - not needed for status)
     CONFIGURED_TEMPLATES=()
     for build_file in "${BUILD_FILES[@]}"; do
         build_count=$(yq_read ".builds | length" "$build_file")
@@ -1098,14 +1098,29 @@ if [[ "$STATUS" == "true" ]]; then
         fi
         
         for ((i=0; i<build_count; i++)); do
-            if ! collect_build_meta "$build_file" "$i"; then
+            # Read basic fields directly (don't need storage for status check)
+            distro=$(yq_read ".builds[$i].distro" "$build_file")
+            release=$(yq_read ".builds[$i].release" "$build_file")
+            version=$(yq_read ".builds[$i].version" "$build_file")
+            vmid=$(yq_read ".builds[$i].vmid" "$build_file")
+            
+            # Skip if required fields are missing
+            if [[ -z "$version" || "$version" == "null" ]]; then
+                continue
+            fi
+            if [[ -z "$release" || "$release" == "null" ]]; then
                 continue
             fi
             
-            distro="$BUILD_DISTRO"
-            version="$BUILD_VERSION"
-            release="$BUILD_RELEASE"
-            vmid="$BUILD_VMID"
+            # Infer distro from filename if not specified
+            if [[ -z "$distro" || "$distro" == "null" ]]; then
+                distro=$(basename "$build_file" | sed 's/-builds\.yaml$//')
+            fi
+            
+            # Auto-generate VMID if not provided
+            if [[ -z "$vmid" || "$vmid" == "null" ]]; then
+                vmid=$(generate_vmid "$distro" "$version")
+            fi
             
             # Apply filters if specified
             if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
