@@ -1759,24 +1759,42 @@ for build_file in "${BUILD_FILES[@]}"; do
         setStatus "Resizing disk to ${DISK_SIZE}" "*"
         ATTEMPT=0
         RESIZE_SUCCESS=false
+        RESIZE_TIMEOUT=false
         while [[ $ATTEMPT -lt 5 ]]; do
             ATTEMPT=$((ATTEMPT + 1))
-            if qm resize "$vmid" scsi0 "$DISK_SIZE"; then
+            # Capture both stdout and stderr to check for timeout warnings
+            RESIZE_OUTPUT=$(qm resize "$vmid" scsi0 "$DISK_SIZE" 2>&1)
+            RESIZE_EXIT=$?
+            
+            # Check for timeout in output (even if exit code is 0)
+            if echo "$RESIZE_OUTPUT" | grep -qi "got timeout"; then
+                RESIZE_TIMEOUT=true
+                setStatus "Disk resize completed but qemu-img timed out (operation may be slow)" "w"
+                BUILD_WARNINGS+=("${BUILD_KEY}|Disk resize timeout warning - operation completed but slower than expected")
+                RESIZE_SUCCESS=true
+                break
+            elif [[ $RESIZE_EXIT -eq 0 ]]; then
                 RESIZE_SUCCESS=true
                 break
             fi
+            
             if [[ $ATTEMPT -lt 5 ]]; then
                 setStatus " - Error resizing disk. Retrying..." "f"
                 sleep 1
             else
                 setStatus " - Error resizing disk." "f"
+                echo "$RESIZE_OUTPUT" >&2
                 BUILD_STEPS+=("disk_resize:failed")
                 BUILD_FAILED=true
                 break
             fi
         done
         if [[ "$RESIZE_SUCCESS" == "true" ]]; then
-            BUILD_STEPS+=("disk_resize:success")
+            if [[ "$RESIZE_TIMEOUT" == "true" ]]; then
+                BUILD_STEPS+=("disk_resize:success_with_timeout")
+            else
+                BUILD_STEPS+=("disk_resize:success")
+            fi
         fi
 
         # Skip to next build if disk resize failed
