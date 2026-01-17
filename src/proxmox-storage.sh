@@ -869,38 +869,41 @@ show_available_storage() {
   # Build device-to-storage mapping first
   declare -A device_storage_map
   
-  # Get all Proxmox storage and map to devices
-  while read -r storage_name; do
-    [[ -z "$storage_name" ]] && continue
-    [[ "$storage_name" == "local" || "$storage_name" == "local-lvm" ]] && continue
+  # Parse storage config to get all non-system storage
+  while IFS='|' read -r type sid path nodes shared; do
+    [[ -n "$sid" ]] || continue
+    [[ "$sid" == "local" || "$sid" == "local-lvm" ]] && continue
     
-    # Get storage type
-    local storage_type
-    storage_type=$(pvesm status 2>/dev/null | grep "^${storage_name}" | awk '{print $2}')
+    if [[ -z "$path" ]]; then
+      continue
+    fi
     
-    # For directory storage, find the device
-    if [[ "$storage_type" == "dir" ]]; then
-      local storage_path mount_device base_device
-      storage_path=$(pvesm path "${storage_name}:0" 2>/dev/null | sed 's|/0$||' || echo "")
-      
-      if [[ -n "$storage_path" ]]; then
-        mount_device=$(df "$storage_path" 2>/dev/null | tail -1 | awk '{print $1}')
-        
-        # Resolve to base disk device
-        if [[ -n "$mount_device" ]]; then
-          base_device=$(lsblk -no PKNAME "$mount_device" 2>/dev/null | head -1)
-          if [[ -z "$base_device" ]]; then
-            # No parent, strip partition number
-            base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
-          fi
-          
-          if [[ -n "$base_device" ]]; then
-            device_storage_map["$base_device"]="$storage_name"
+    # Get mount device for this storage path
+    local mount_device base_device
+    mount_device=$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || echo "")
+    
+    if [[ -n "$mount_device" ]]; then
+      # Resolve to base disk device (strip partition numbers)
+      if [[ "$mount_device" =~ ^/dev/mapper/ ]] || [[ "$mount_device" =~ ^/dev/dm- ]]; then
+        # LVM - get PV
+        local vg_name pv_device
+        vg_name=$(lvs --noheadings -o vg_name "$mount_device" 2>/dev/null | xargs || echo "")
+        if [[ -n "$vg_name" ]]; then
+          pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$vg_name" '$2==vg {print $1}' | head -1)
+          if [[ -n "$pv_device" ]]; then
+            base_device=$(echo "$pv_device" | sed 's|/dev/||; s|[0-9]*$||')
           fi
         fi
+      else
+        # Direct partition - strip numbers
+        base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
+      fi
+      
+      if [[ -n "$base_device" ]]; then
+        device_storage_map["$base_device"]="$sid"
       fi
     fi
-  done < <(pvesm status 2>/dev/null | tail -n +2 | awk '{print $1}')
+  done < <(parse_storage_cfg)
   
   # Display device table with storage status
   p_info "Available storage summary"
@@ -944,59 +947,77 @@ show_storage_mapping() {
   local node
   node="$(hostname -s)"
   
-  # Get existing Proxmox storage
-  local storage_list
-  storage_list=$(pvesm status 2>/dev/null | tail -n +2 | awk '{print $1}' || echo "")
-  
-  if [[ -z "$storage_list" ]]; then
-    return
-  fi
+  # Parse storage config to get paths
+  declare -A storage_paths storage_types
+  while IFS='|' read -r type sid path nodes shared; do
+    [[ -n "$sid" ]] || continue
+    [[ "$sid" == "local" || "$sid" == "local-lvm" ]] && continue
+    storage_types["$sid"]="$type"
+    storage_paths["$sid"]="$path"
+  done < <(parse_storage_cfg)
   
   # Check if there's any non-system storage
-  local has_storage=0
-  while IFS= read -r storage_name; do
-    [[ "$storage_name" == "local" || "$storage_name" == "local-lvm" ]] && continue
-    has_storage=1
-    break
-  done <<< "$storage_list"
-  
-  if [[ $has_storage -eq 0 ]]; then
+  if [[ ${#storage_paths[@]} -eq 0 ]]; then
     return
   fi
   
   echo ""
-  p_info "Proxmox storage to device mapping"
-  printf '%-15s %-8s %-12s %-10s %-30s\n' "Storage Name" "Type" "Device" "Size" "Mount Point"
+  echo "╔════════════════════════════════════════════════════════════════════════════════╗"
+  echo "║ PROXMOX STORAGE → DEVICE MAPPING"
+  echo "╚════════════════════════════════════════════════════════════════════════════════╝"
+  echo ""
   
-  while IFS= read -r storage_name; do
-    [[ -z "$storage_name" ]] && continue
-    [[ "$storage_name" == "local" || "$storage_name" == "local-lvm" ]] && continue
+  for sid in "${!storage_paths[@]}"; do
+    local storage_type="${storage_types[$sid]}"
+    local storage_path="${storage_paths[$sid]}"
     
-    local storage_type storage_path mount_device base_device size mount_point
-    storage_type=$(pvesm status 2>/dev/null | grep "^${storage_name}" | awk '{print $2}')
+    if [[ -z "$storage_path" ]]; then
+      continue
+    fi
     
-    if [[ "$storage_type" == "dir" ]]; then
-      storage_path=$(pvesm path "${storage_name}:0" 2>/dev/null | sed 's|/0$||' || echo "")
-      mount_point="$storage_path"
-      
-      if [[ -n "$storage_path" ]]; then
-        mount_device=$(df "$storage_path" 2>/dev/null | tail -1 | awk '{print $1}')
-        
-        # Resolve to base disk device
-        if [[ -n "$mount_device" ]]; then
-          base_device=$(lsblk -no PKNAME "$mount_device" 2>/dev/null | head -1)
-          if [[ -z "$base_device" ]]; then
-            base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
-          fi
-          
-          if [[ -n "$base_device" ]]; then
-            size=$(lsblk -ndo SIZE "/dev/$base_device" 2>/dev/null || echo "?")
-            printf '%-15s %-8s %-12s %-10s %-30s\n' "$storage_name" "$storage_type" "/dev/$base_device" "$size" "$mount_point"
-          fi
+    # Get mount device
+    local mount_device
+    mount_device=$(findmnt -n -o SOURCE --target "$storage_path" 2>/dev/null || echo "")
+    
+    if [[ -z "$mount_device" ]]; then
+      # Path might not be mounted, skip
+      continue
+    fi
+    
+    # Resolve to underlying physical device
+    local base_device=""
+    local device_info=""
+    
+    # Check if it's an LVM device
+    if [[ "$mount_device" =~ ^/dev/mapper/ ]] || [[ "$mount_device" =~ ^/dev/dm- ]]; then
+      # LVM - trace back to PV
+      local vg_name lv_name pv_device
+      vg_name=$(lvs --noheadings -o vg_name "$mount_device" 2>/dev/null | xargs || echo "")
+      if [[ -n "$vg_name" ]]; then
+        pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$vg_name" '$2==vg {print $1}' | head -1)
+        if [[ -n "$pv_device" ]]; then
+          base_device=$(echo "$pv_device" | sed 's/[0-9]*$//')
         fi
       fi
+    else
+      # Direct mount - strip partition number to get base device
+      base_device=$(echo "$mount_device" | sed 's/[0-9]*$//')
     fi
-  done <<< "$storage_list"
+    
+    # Get device details
+    if [[ -n "$base_device" && -b "$base_device" ]]; then
+      local size model
+      size=$(lsblk -ndo SIZE "$base_device" 2>/dev/null || echo "?")
+      model=$(lsblk -ndo MODEL "$base_device" 2>/dev/null | xargs || echo "Unknown")
+      device_info=" → ${base_device} (${size}, ${model})"
+    fi
+    
+    # Print storage entry
+    echo -e "  ${Green}${sid}${NC} (${storage_type})${device_info}"
+    echo "    Mount: ${storage_path}"
+    echo "    Device: ${mount_device}"
+    echo ""
+  done
 }
 
 whatif_summary_provision() {
