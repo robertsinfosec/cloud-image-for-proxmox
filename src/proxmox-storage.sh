@@ -1013,7 +1013,7 @@ show_storage_mapping() {
     fi
     
     # Print storage entry
-    echo -e "  ${Green}${sid}${NC} (${storage_type})${device_info}"
+    echo -e "  ${C_OK}${sid}${NC} (${storage_type})${device_info}"
     echo "    Mount: ${storage_path}"
     echo "    Device: ${mount_device}"
     echo ""
