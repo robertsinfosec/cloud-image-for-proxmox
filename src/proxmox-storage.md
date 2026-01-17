@@ -103,7 +103,7 @@ Disk labels and storage IDs follow this pattern:
 Usage:
   proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--only <filter>]
   proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
-  proxmox-storage.sh --show-available [--extended]
+  proxmox-storage.sh --status [--extended]
   proxmox-storage.sh --help
 
 Options:
@@ -113,14 +113,14 @@ Options:
   --whatif, --simulate
                       Show what would be done without making changes
   --full-format       Slower, full ext4 format (default is quick)
-  --show-available    Show available storage summary and exit
+  --status            Show storage status and available devices
   --extended          Show additional SMART health fields
   --only <filter>     Filter to specific device(s) or storage name(s) (repeatable)
                       Examples: --only /dev/sdb  --only HDD-2C  --only SSD-3A
   --help              Show this help
 ```
 
-## `--show-available`
+## `--status`
 
 Prints a concise table of attached disks and their characteristics using SMART data where possible. The `Media` column shows rotation speed for HDDs, `SSD` for solid‑state disks, and `unknown` if SMART does not report a rotation rate.
 
@@ -129,7 +129,7 @@ Prints a concise table of attached disks and their characteristics using SMART d
 
 ### Example Output
 
-Below is the output of one node when running with `--show-available`:
+Below is the output of one node when running with `--status`:
 
 ```
 [*] Context: node=pve1 mode=show-available whatif=0 force=0 full_format=0 device=all
@@ -147,7 +147,7 @@ Device     Size     Model                          Media
 and just as a reference, here is the output of another node:
 
 ```
-[*] Context: node=pve1 mode=show-available whatif=0 force=0 full_format=0 device=all
+[*] Context: node=pve1 mode=status whatif=0 force=0 full_format=0 filters=all
 [*] Checking root privileges
 [+] Running as root
 [*] Available storage summary
@@ -168,7 +168,7 @@ If you pass `--extended`, the table includes:
 Example with `--extended`:
 
 ```
-[*] Context: node=pve1 mode=show-available whatif=0 force=0 full_format=0 device=all
+[*] Context: node=pve1 mode=status whatif=0 force=0 full_format=0 filters=all
 [*] Checking root privileges
 [+] Running as root
 [*] Available storage summary
@@ -217,7 +217,7 @@ proxmox-storage.sh --provision --only /dev/sdb --only SSD-3A
 ```
 
 > [!TIP]
-> Use `lsblk` to see attached disks and identify the correct device path. Use `--show-available` to see existing storage labels.
+> Use `lsblk` to see attached disks and identify the correct device path. Use `--status` to see existing storage labels.
 
 When `--only` is used:
 

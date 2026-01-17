@@ -73,7 +73,7 @@ usage() {
 Usage:
   proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--only <filter>]
   proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
-  proxmox-storage.sh --show-available [--extended]
+  proxmox-storage.sh --status [--extended]
   proxmox-storage.sh --help
 
 Options:
@@ -83,7 +83,7 @@ Options:
   --whatif, --simulate
                       Show what would be done without making changes
   --full-format       Slower, full ext4 format (default is quick)
-  --show-available    Show available storage summary and exit
+  --status            Show storage status and available devices
   --extended          Show additional SMART health fields
   --only <filter>     Filter to specific device(s) or storage name(s) (repeatable)
                       Examples: --only /dev/sdb  --only HDD-2C  --only SSD-3A
@@ -114,8 +114,8 @@ parse_args() {
       --full-format)
         QUICK_FORMAT=0
         ;;
-      --show-available)
-        MODE="show-available"
+      --status)
+        MODE="status"
         ;;
       --extended)
         EXTENDED=1
@@ -932,6 +932,8 @@ show_available_storage() {
     # Check storage status
     if [[ -n "${device_storage_map[$name]:-}" ]]; then
       storage_status="${device_storage_map[$name]}"
+    elif [[ "$dev" == "$sysdisk" ]]; then
+      storage_status="(system)"
     else
       storage_status="-"
     fi
@@ -960,16 +962,18 @@ show_storage_mapping() {
     storage_paths["$sid"]="$path"
   done < <(parse_storage_cfg)
   
-  # Check if there's any non-system storage
-  if [[ ${#storage_paths[@]} -eq 0 ]]; then
-    return
-  fi
-  
   echo ""
   echo "╔════════════════════════════════════════════════════════════════════════════════╗"
   echo "║ PROXMOX STORAGE → DEVICE MAPPING"
   echo "╚════════════════════════════════════════════════════════════════════════════════╝"
   echo ""
+  
+  # Check if there's any non-system storage
+  if [[ ${#storage_paths[@]} -eq 0 ]]; then
+    echo "  No device allocations found"
+    echo ""
+    return
+  fi
   
   for sid in "${!storage_paths[@]}"; do
     local storage_type="${storage_types[$sid]}"
@@ -1109,12 +1113,14 @@ show_available_for_provisioning() {
     echo ""
     echo -e "    ${C_INFO}./proxmox-storage.sh --provision --only ${dev}${NC}"
   else
-    # Multiple devices - show list
+    # Multiple devices - show list and build exact command
     echo "  The following devices are available for Proxmox storage:"
     echo ""
+    local exact_cmd="./proxmox-storage.sh --provision"
     for entry in "${available_devices[@]}"; do
       IFS='|' read -r dev size model <<< "$entry"
       echo -e "    ${C_WARN}${dev}${NC} (${size}, ${model})"
+      exact_cmd+=" --only ${dev}"
     done
     echo ""
     echo "  To provision them, run:"
@@ -1123,7 +1129,7 @@ show_available_for_provisioning() {
     echo -e "    ${C_INFO}./proxmox-storage.sh --provision --force${NC}"
     echo ""
     echo -e "    ${C_INFO}# Or provision specific device(s)${NC}"
-    echo -e "    ${C_INFO}./proxmox-storage.sh --provision --only /dev/sdX${NC}"
+    echo -e "    ${C_INFO}${exact_cmd}${NC}"
   fi
   echo ""
 }
@@ -1610,9 +1616,9 @@ main() {
   log_context
   require_root
 
-  if [[ "$MODE" == "show-available" ]]; then
+  if [[ "$MODE" == "status" ]]; then
     if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
-      die "--only is not valid with --show-available"
+      die "--only is not valid with --status"
     fi
     require_cmd smartctl
     show_available_storage

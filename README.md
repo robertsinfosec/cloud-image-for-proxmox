@@ -125,7 +125,7 @@ All templates include:
 cd src
 
 # Preview what will be provisioned
-./proxmox-storage.sh --show-available
+./proxmox-storage.sh --status
 
 # Provision all available disks (with confirmation)
 ./proxmox-storage.sh --provision
