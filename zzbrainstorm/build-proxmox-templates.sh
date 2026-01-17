@@ -790,14 +790,24 @@ if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
         done
     done
     
-    if [[ ${#TEMPLATES_TO_REMOVE[@]} -eq 0 ]]; then
-        setStatus "No templates found to remove" "q"
+    # Filter to only include templates that actually exist in Proxmox
+    EXISTING_TEMPLATES=()
+    setStatus "Checking which templates exist in Proxmox" "*"
+    for entry in "${TEMPLATES_TO_REMOVE[@]}"; do
+        IFS='|' read -r vmid distro version release <<< "$entry"
+        if qm status "$vmid" >/dev/null 2>&1; then
+            EXISTING_TEMPLATES+=("$entry")
+        fi
+    done
+    
+    if [[ ${#EXISTING_TEMPLATES[@]} -eq 0 ]]; then
+        setStatus "No matching templates found in Proxmox" "q"
         exit 0
     fi
     
     echo ""
     echo "Templates to remove:"
-    for entry in "${TEMPLATES_TO_REMOVE[@]}"; do
+    for entry in "${EXISTING_TEMPLATES[@]}"; do
         IFS='|' read -r vmid distro version release <<< "$entry"
         echo "  - VMID $vmid: $distro $version ($release)"
     done
@@ -809,7 +819,7 @@ if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
         exit 0
     fi
     
-    for entry in "${TEMPLATES_TO_REMOVE[@]}"; do
+    for entry in "${EXISTING_TEMPLATES[@]}"; do
         IFS='|' read -r vmid distro version release <<< "$entry"
         setStatus "Removing template VMID $vmid ($distro $version)" "*"
         if qm destroy "$vmid" --purge 2>/dev/null; then
