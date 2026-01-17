@@ -955,7 +955,7 @@ for build_file in "${BUILD_FILES[@]}"; do
             HASH_ONDISK=$($HASH_CMD "$IMAGE_ORIG" | awk '{print $1}')
 
             setStatus "Extracting hash from checksum file" "*"
-            HASH_FROMINET=$(extract_hash_from_file "$HASH_FILE" "$IMAGE_BASENAME")
+            HASH_FROMINET=$(extract_hash_from_file "$HASH_FILE" "$IMAGE_BASENAME" || true)
 
             if [[ -z "$HASH_FROMINET" ]]; then
                 setStatus "Checksum file does not contain entry for ${IMAGE_BASENAME}. Skipping this build." "f"
