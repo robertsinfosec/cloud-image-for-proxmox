@@ -52,15 +52,15 @@ usage() {
     echo "  --only <distro[:release]>  Filter builds (repeatable), e.g. --only debian or --only debian:trixie"
     echo "  --configroot <path>        Root directory containing config/, distros/ (default: script directory)"
     echo "  --clean-cache              Remove all cached images and checksums"
-    echo "  --remove-templates         Remove VM templates (use with --only to filter which ones)"
-    echo "  --force                    Skip confirmation prompts (use with --remove-templates)"
+    echo "  --remove                   Remove VM templates (use with --only to filter which ones)"
+    echo "  --force                    Skip confirmation prompts (use with --remove)"
     echo "  --validate                 Validate configuration files without building"
     echo "  -h, --help                 Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0 --build                 # Build all configured templates"
     echo "  $0 --build --only ubuntu   # Build only Ubuntu templates"
-    echo "  $0 --remove-templates --only ubuntu --force  # Remove Ubuntu templates without confirmation"
+    echo "  $0 --remove --only ubuntu --force  # Remove Ubuntu templates without confirmation"
     echo "  $0 --validate              # Validate configuration without building"
     echo "  $0 --clean-cache           # Clean cached images"
 }
@@ -732,7 +732,7 @@ while [[ $# -gt 0 ]]; do
         --clean-cache)
             CLEAN_CACHE=true
             ;;
-        --remove-templates)
+        --remove)
             REMOVE_TEMPLATES=true
             ;;
         --force)
@@ -992,6 +992,16 @@ if [[ "$VALIDATE" == "true" ]]; then
                 continue
             fi
             
+            # Check if SHA checksum is available for this distro
+            RELEASE="$release"
+            VERSION="$version"
+            source "$DISTROS_DIR/${distro}-config.sh"
+            
+            if [[ -z "${SHA256SUMS_PATH:-}" ]]; then
+                echo "    ⚠ $BUILD_LABEL: No SHA checksum available - downloads will NOT be validated"
+                VALIDATION_WARNINGS=$((VALIDATION_WARNINGS + 1))
+            fi
+            
             # Check catalog file exists
             if [[ ! -f "$CATALOG_DIR/${distro}-catalog.yaml" ]]; then
                 echo "    ⚠ $BUILD_LABEL: Catalog file not found: ${distro}-catalog.yaml"
@@ -1226,6 +1236,13 @@ for build_file in "${BUILD_FILES[@]}"; do
         VERSION="$version"
         source "$DISTROS_DIR/${distro}-config.sh"
 
+        # Check for image_filename override (needed for Oracle Linux and other special cases)
+        IMAGE_FILENAME_OVERRIDE=$(resolve_value "$build_file" "$i" "image_filename" "")
+        if [[ -n "$IMAGE_FILENAME_OVERRIDE" && "$IMAGE_FILENAME_OVERRIDE" != "null" ]]; then
+            # Override the IMAGE_PATH with the specific filename
+            IMAGE_PATH="${IMAGE_PATH%/*}/${IMAGE_FILENAME_OVERRIDE}"
+        fi
+
         SKIP_PKG_INSTALL_EFFECTIVE="${SKIP_PKG_INSTALL:-false}"
         SKIP_PKG_INSTALL_EFFECTIVE=$(echo "$SKIP_PKG_INSTALL_EFFECTIVE" | awk '{print tolower($0)}')
 
@@ -1272,8 +1289,10 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         # Check if checksum validation is available
         if [[ -z "${SHA256SUMS_PATH:-}" ]]; then
-            setStatus "No checksum file configured for ${distro}. Skipping checksum validation." "q"
+            setStatus "WARNING: No SHA checksum available for ${distro}" "q"
+            setStatus "Downloaded image will NOT be validated - use with caution!" "q"
             HASHES_MATCH=1  # Skip validation loop
+            BUILD_STEPS+=("checksum_validation:skipped")
             
             # Download image if not cached
             if [[ ! -f "$IMAGE_ORIG" ]]; then

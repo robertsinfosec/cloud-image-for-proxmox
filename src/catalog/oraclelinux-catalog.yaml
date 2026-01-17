@@ -1,16 +1,23 @@
-# Catalog of known Oracle Linux releases (examples)
-# Reference list of what can be built (naming/download handled in distros/).
+# Catalog of known Oracle Linux releases
+# Reference: https://yum.oracle.com/oracle-linux-templates.html
+# Oracle Linux uses major.minor versioning (e.g., 10.0, 9.6, 8.10)
+# Images are located at: https://yum.oracle.com/templates/OracleLinux/OL{major}/u{minor}/x86_64/
 
 catalog:
   - distro: oraclelinux
-    release: "9"
-    version: "9"
-    notes: "Oracle Linux 9 (GenericCloud)"
+    release: "10.0"
+    version: "10.0"
+    notes: "Oracle Linux 10.0"
+    filename: "OL10U0_x86_64-kvm-b266.qcow2"
+    
   - distro: oraclelinux
-    release: "8"
-    version: "8"
-    notes: "Oracle Linux 8 (GenericCloud)"
+    release: "9.6"
+    version: "9.6"
+    notes: "Oracle Linux 9.6"
+    filename: "OL9U6_x86_64-kvm-b265.qcow2"
+    
   - distro: oraclelinux
-    release: "7"
-    version: "7"
-    notes: "Oracle Linux 7 (GenericCloud)"
+    release: "8.10"
+    version: "8.10"
+    notes: "Oracle Linux 8.10"
+    filename: "OL8U10_x86_64-kvm-b258.qcow2"

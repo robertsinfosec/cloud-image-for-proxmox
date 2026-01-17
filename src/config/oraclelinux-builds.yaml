@@ -1,19 +1,31 @@
 # Batch builds (YAML)
 # Each entry overrides defaults in config/defaults.yaml
 # VMID is auto-generated as: {node_digit}{distro_digit}{version}
+# Oracle Linux uses major.minor versioning (10.0, 9.6, 8.10)
+# Reference: https://yum.oracle.com/oracle-linux-templates.html
+# Current version + 2 previous major releases
 
 builds:
+  # Oracle Linux 10.x (current)
   - distro: oraclelinux
-    release: "9"
-    version: "9"
-    notes: "Oracle Linux 9 (GenericCloud)"
+    release: "10.0"
+    version: "10.0"
+    notes: "Oracle Linux 10.0 (current)"
+    override:
+      image_filename: "OL10U0_x86_64-kvm-b266.qcow2"
 
+  # Oracle Linux 9.x (previous)
   - distro: oraclelinux
-    release: "8"
-    version: "8"
-    notes: "Oracle Linux 8 (GenericCloud)"
+    release: "9.6"
+    version: "9.6"
+    notes: "Oracle Linux 9.6"
+    override:
+      image_filename: "OL9U6_x86_64-kvm-b265.qcow2"
 
+  # Oracle Linux 8.x (previous)
   - distro: oraclelinux
-    release: "7"
-    version: "7"
-    notes: "Oracle Linux 7 (GenericCloud)"
+    release: "8.10"
+    version: "8.10"
+    notes: "Oracle Linux 8.10"
+    override:
+      image_filename: "OL8U10_x86_64-kvm-b258.qcow2"

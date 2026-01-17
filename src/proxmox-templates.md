@@ -41,7 +41,7 @@ A unified entrypoint for building Proxmox cloud-init VM templates across multipl
 ```
 
 > [!NOTE]
-> **Sensible Defaults & Batteries Included**: Running the script without any options shows the help screen. You must explicitly specify an action flag (`--build`, `--validate`, `--clean-cache`, or `--remove-templates`) to perform any operation.
+> **Sensible Defaults & Batteries Included**: Running the script without any options shows the help screen. You must explicitly specify an action flag (`--build`, `--validate`, `--clean-cache`, or `--remove`) to perform any operation.
 
 ### Options
 
@@ -52,8 +52,8 @@ A unified entrypoint for building Proxmox cloud-init VM templates across multipl
 | `--configroot <path>` | Root directory containing config/ and distros/ |
 | `--validate` | Validate configuration files without building |
 | `--clean-cache` | Remove all cached images and checksums |
-| `--remove-templates` | Remove VM templates (use with --only to filter) |
-| `--force` | Skip confirmation prompts (use with --remove-templates) |
+| `--remove` | Remove VM templates (use with --only to filter) |
+| `--force` | Skip confirmation prompts (use with --remove) |
 | `-h, --help` | Show help message |
 
 ### Examples
@@ -82,10 +82,10 @@ A unified entrypoint for building Proxmox cloud-init VM templates across multipl
 ./build-proxmox-templates.sh --build
 
 # Remove only Ubuntu templates
-./build-proxmox-templates.sh --remove-templates --only ubuntu
+./build-proxmox-templates.sh --remove --only ubuntu
 
 # Remove templates without confirmation
-./build-proxmox-templates.sh --remove-templates --only ubuntu --force
+./build-proxmox-templates.sh --remove --only ubuntu --force
 ```
 
 > [!TIP]
@@ -203,7 +203,7 @@ The build process tracks **individual steps** for each template and provides a c
 
 Each build tracks these phases:
 - `image_download` - Downloading cloud image
-- `checksum_validation` - Hash verification
+- `checksum_validation` - SHA-256 hash verification (when available)
 - `image_customization` - virt-customize operations
 - `vm_creation` - Initial VM creation
 - `disk_import` - Importing disk to storage
@@ -214,6 +214,9 @@ Each build tracks these phases:
 - `cloudinit_config` - Applying Cloud-Init settings
 - `disk_resize` - Resizing disk to target size
 - `template_conversion` - Converting VM to template
+
+> [!IMPORTANT]
+> **SHA Checksum Validation**: Downloaded images are **always** validated against SHA-256 checksums when available from the distribution. For distributions that don't provide programmatic checksums (e.g., [Oracle Linux](https://yum.oracle.com/oracle-linux-templates.html)), a warning is displayed during both `--validate` and `--build` operations. Use these templates with appropriate caution in production environments.
 
 ### Summary Output Example
 
@@ -316,6 +319,7 @@ Run `--validate` to check configuration before building:
 - ✓ Required fields present (distro, version, release)
 - ✓ Distro config files exist
 - ✓ Catalog files exist (warning if missing)
+- ✓ SHA checksum availability (warns if not available)
 - ✓ VMID generation works
 - ✓ **VMID collision detection** across all builds
 
@@ -327,11 +331,19 @@ Validating: ubuntu-builds.yaml
     ✓ Build #1 (24.04): ubuntu 24.04 (noble) - VMID 172404
     ✓ Build #2 (22.04): ubuntu 22.04 (jammy) - VMID 172204
     ✓ Build #3 (20.04): ubuntu 20.04 (focal) - VMID 172004
+Validating: oraclelinux-builds.yaml
+  Found 3 build(s)
+    ⚠ Build #1 (10.0): No SHA checksum available - downloads will NOT be validated
+    ✓ Build #1 (10.0): oraclelinux 10.0 (10.0) - VMID 351000
+    ⚠ Build #2 (9.6): No SHA checksum available - downloads will NOT be validated
+    ✓ Build #2 (9.6): oraclelinux 9.6 (9.6) - VMID 350906
 
 ======================================================================
 V A L I D A T I O N  S U M M A R Y
 ======================================================================
 Build files validated: 8
+Total builds found: 21
+Warnings: 3 8
 Total builds found: 21
 Errors: 0
 ======================================================================
@@ -366,16 +378,16 @@ Remove VM templates from Proxmox:
 
 ```bash
 # Remove all configured templates (with confirmation)
-./build-proxmox-templates.sh --remove-templates
+./build-proxmox-templates.sh --remove
 
 # Remove only Ubuntu templates
-./build-proxmox-templates.sh --remove-templates --only ubuntu
+./build-proxmox-templates.sh --remove --only ubuntu
 
 # Remove specific version
-./build-proxmox-templates.sh --remove-templates --only debian:bookworm
+./build-proxmox-templates.sh --remove --only debian:bookworm
 
 # Remove without confirmation (automation-friendly)
-./build-proxmox-templates.sh --remove-templates --only centos --force
+./build-proxmox-templates.sh --remove --only centos --force
 ```
 
 **How it works:**

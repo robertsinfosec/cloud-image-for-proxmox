@@ -71,6 +71,7 @@ cd src
 ### Template Management (`proxmox-templates.sh`)
 - ✅ **Auto-VMID Generation** - Unique IDs based on node + distro + version
 - ✅ **Auto-Storage Selection** - Intelligently picks SSD/HDD based on availability
+- ✅ **SHA Checksum Validation** - Verifies downloads when checksums are available
 - ✅ **Build Tracking** - Success/Warning/Failure status for each template
 - ✅ **Configuration Validation** - Pre-flight checks before building
 - ✅ **Cleanup Operations** - Remove cache or templates selectively
@@ -91,6 +92,10 @@ All templates include:
 - ✅ DNS search domain
 - ✅ Qemu guest agent
 - ✅ Security hardening
+- ✅ SHA-256 verified downloads (when available from distribution)
+
+> [!NOTE]
+> Some distributions (e.g., [Oracle Linux](https://yum.oracle.com/oracle-linux-templates.html)) don't provide programmatic checksums. The script warns you during validation and build when checksums aren't available.
 
 ### Supported Distributions
 
@@ -145,10 +150,10 @@ cd src
 ./proxmox-templates.sh --clean-cache
 
 # Remove templates
-./proxmox-templates.sh --remove-templates --only centos
+./proxmox-templates.sh --remove --only centos
 
 # Remove templates without confirmation
-./proxmox-templates.sh --remove-templates --only centos --force
+./proxmox-templates.sh --remove --only centos --force
 ```
 
 ---
