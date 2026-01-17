@@ -30,6 +30,8 @@ DISTROS_DIR=""
 DEFAULTS_FILE=""
 
 ONLY_FILTERS=()
+CLEAN_CACHE=false
+CLEAN_TEMPLATES=false
 
 # Auto-detect node digit from hostname (e.g., pve3 -> 3)
 HOSTNAME=$(hostname -s)
@@ -40,9 +42,14 @@ else
 fi
 
 usage() {
-    echo "Usage: $0 [--only <distro[:release]>] [--only <distro[:release]>] [--configroot <path>]"
-    echo "  --only       Filter builds (repeatable), e.g. --only debian or --only debian:trixie"
-    echo "  --configroot Root directory containing config/, distros/ (default: script directory)"
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --only <distro[:release]>  Filter builds (repeatable), e.g. --only debian or --only debian:trixie"
+    echo "  --configroot <path>        Root directory containing config/, distros/ (default: script directory)"
+    echo "  --clean-cache              Remove all cached images and checksums"
+    echo "  --clean-templates          Remove VM templates (use with --only to filter which ones)"
+    echo "  -h, --help                 Show this help message"
 }
 
 setStatus() {
@@ -73,6 +80,16 @@ require_root() {
     if [[ $(whoami) != "root" ]]; then
         echo "ERROR: This utility must be run as root (or sudo)."
         exit 1
+    fi
+}
+
+cleanup_build_files() {
+    # Cleanup function for temp files created during build
+    # Safe to call even if files don't exist
+    rm -f "$TEMP_KEYS" 2>/dev/null || true
+    rm -f "$WORK_IMAGE" 2>/dev/null || true
+    if [[ "${CACHE_KEEP:-false}" != "true" ]]; then
+        rm -f "$IMAGE_ORIG" "$HASH_FILE" 2>/dev/null || true
     fi
 }
 
@@ -684,6 +701,12 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${1:-}" ]] || { echo "ERROR: --configroot requires a value"; exit 1; }
             CONFIG_ROOT="$1"
             ;;
+        --clean-cache)
+            CLEAN_CACHE=true
+            ;;
+        --clean-templates)
+            CLEAN_TEMPLATES=true
+            ;;
         -h|--help)
             usage
             exit 0
@@ -719,6 +742,96 @@ fi
 echo -e "${LightPurple}$Name $Version${NC}"
 echo ""
 setStatus "Initializing environment" "*"
+
+# Handle cleanup operations
+if [[ "$CLEAN_CACHE" == "true" ]]; then
+    DEFAULT_CACHE_DIR=$(yq_read ".defaults.cache.dir" "$DEFAULTS_FILE")
+    if [[ "$DEFAULT_CACHE_DIR" != /* ]]; then
+        CACHE_DIR="$CONFIG_ROOT/$DEFAULT_CACHE_DIR"
+    else
+        CACHE_DIR="$DEFAULT_CACHE_DIR"
+    fi
+    
+    if [[ -d "$CACHE_DIR" ]]; then
+        setStatus "Cleaning cache directory: $CACHE_DIR" "*"
+        rm -rf "$CACHE_DIR"/*
+        setStatus "Cache cleaned successfully" "s"
+    else
+        setStatus "Cache directory does not exist: $CACHE_DIR" "q"
+    fi
+    exit 0
+fi
+
+if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
+    setStatus "Scanning for templates to remove" "*"
+    
+    # Load build files to determine which VMIDs to clean
+    BUILD_FILES=()
+    while IFS= read -r -d '' file; do
+        BUILD_FILES+=("$file")
+    done < <(find "$CONFIG_DIR" -maxdepth 1 -type f -name "*-builds.yaml" ! -name "*.disabled" -print0 | sort -z)
+    
+    TEMPLATES_TO_REMOVE=()
+    for build_file in "${BUILD_FILES[@]}"; do
+        build_count=$(yq_read ".builds | length" "$build_file")
+        if [[ "$build_count" == "null" || "$build_count" == "0" || ! "$build_count" =~ ^[0-9]+$ ]]; then
+            continue
+        fi
+        
+        for ((i=0; i<build_count; i++)); do
+            if ! collect_build_meta "$build_file" "$i"; then
+                continue
+            fi
+            
+            if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+                matched=false
+                for filter in "${ONLY_FILTERS[@]}"; do
+                    if matches_filter "$BUILD_DISTRO" "$BUILD_RELEASE" "$BUILD_VERSION" "$filter"; then
+                        matched=true
+                        break
+                    fi
+                done
+                if [[ "$matched" != "true" ]]; then
+                    continue
+                fi
+            fi
+            
+            TEMPLATES_TO_REMOVE+=("${BUILD_VMID}|${BUILD_DISTRO}|${BUILD_VERSION}|${BUILD_RELEASE}")
+        done
+    done
+    
+    if [[ ${#TEMPLATES_TO_REMOVE[@]} -eq 0 ]]; then
+        setStatus "No templates found to remove" "q"
+        exit 0
+    fi
+    
+    echo ""
+    echo "Templates to remove:"
+    for entry in "${TEMPLATES_TO_REMOVE[@]}"; do
+        IFS='|' read -r vmid distro version release <<< "$entry"
+        echo "  - VMID $vmid: $distro $version ($release)"
+    done
+    echo ""
+    
+    read -r -p "Remove these templates? [y/N]: " reply
+    if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
+        setStatus "Cleanup cancelled" "q"
+        exit 0
+    fi
+    
+    for entry in "${TEMPLATES_TO_REMOVE[@]}"; do
+        IFS='|' read -r vmid distro version release <<< "$entry"
+        setStatus "Removing template VMID $vmid ($distro $version)" "*"
+        if qm destroy "$vmid" --purge 2>/dev/null; then
+            setStatus "Successfully removed VMID $vmid" "s"
+        else
+            setStatus "VMID $vmid not found or already removed" "q"
+        fi
+    done
+    
+    setStatus "Template cleanup complete" "s"
+    exit 0
+fi
 
 setStatus "Checking runtime prerequisites" "*"
 require_root
@@ -814,6 +927,11 @@ for entry in "${PLANNED_BUILDS[@]}"; do
 done
 echo ""
 
+# Initialize build tracking arrays
+BUILD_RESULTS=()
+BUILD_ERRORS=()
+BUILD_WARNINGS=()
+
 for build_file in "${BUILD_FILES[@]}"; do
     build_count=$(yq_read ".builds | length" "$build_file")
     if [[ "$build_count" == "null" || "$build_count" == "0" ]]; then
@@ -896,6 +1014,12 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         mkdir -p "$CACHE_DIR"
 
+        # Track this build attempt
+        BUILD_KEY="${distro} ${version} (${release})"
+        BUILD_FAILED=false
+        BUILD_STEPS=()
+        BUILD_COMPLETED=false
+
         IMAGE_BASENAME=$(basename "$IMAGE_PATH")
         HASH_BASENAME=$(basename "$SHA256SUMS_PATH")
 
@@ -934,10 +1058,14 @@ for build_file in "${BUILD_FILES[@]}"; do
                 setStatus "Downloading image: $IMAGE_URL" "*"
                 if ! wget --progress=bar:force "$IMAGE_URL" -O "$IMAGE_ORIG"; then
                     setStatus "Image download failed. Skipping this build." "f"
+                    BUILD_STEPS+=("image_download:failed")
                     BUILD_FAILED=1
+                else
+                    BUILD_STEPS+=("image_download:success")
                 fi
             else
                 setStatus "Using cached image: $IMAGE_ORIG" "*"
+                BUILD_STEPS+=("image_download:cached")
             fi
         fi
 
@@ -946,6 +1074,7 @@ for build_file in "${BUILD_FILES[@]}"; do
             
             if [[ $ATTEMPT -gt 3 ]]; then
                 setStatus "Unable to validate image after 3 attempts. Skipping this build." "f"
+                BUILD_STEPS+=("checksum_validation:failed")
                 BUILD_FAILED=1
                 break
             fi
@@ -979,6 +1108,7 @@ for build_file in "${BUILD_FILES[@]}"; do
 
             if [[ -z "$HASH_FROMINET" ]]; then
                 setStatus "Checksum file does not contain entry for ${IMAGE_BASENAME}. Skipping this build." "f"
+                BUILD_STEPS+=("checksum_validation:failed")
                 BUILD_FAILED=1
                 break
             fi
@@ -990,47 +1120,56 @@ for build_file in "${BUILD_FILES[@]}"; do
                 setStatus "Hashes do NOT match. Retrying..." "f"
             else
                 HASHES_MATCH=1
+                BUILD_STEPS+=("checksum_validation:success")
                 setStatus "Hashes match." "s"
             fi
         done
 
         if [[ $BUILD_FAILED -eq 1 ]]; then
             setStatus "Skipping build for ${distro} ${version} (${release})" "f"
-            continue
-        fi
-
-        cp "$IMAGE_ORIG" "$WORK_IMAGE"
-
-        setStatus "Purging existing VM template (${vmid}) if it already exists" "*"
-        if qm destroy "$vmid" --purge; then
-            setStatus " - Successfully deleted." "s"
         else
-            setStatus " - No existing template found." "s"
-        fi
+            cp "$IMAGE_ORIG" "$WORK_IMAGE"
 
-        VIRT_ARGS=()
-        if [[ "$SKIP_PKG_INSTALL_EFFECTIVE" != "true" ]]; then
-            if declare -p PKGS >/dev/null 2>&1; then
-                if [[ ${#PKGS[@]} -gt 0 ]]; then
-                    VIRT_ARGS+=("--install" "$(IFS=,; echo "${PKGS[*]}")")
+            setStatus "Purging existing VM template (${vmid}) if it already exists" "*"
+            if qm destroy "$vmid" --purge; then
+                setStatus " - Successfully deleted." "s"
+            else
+                setStatus " - No existing template found." "s"
+            fi
+
+            VIRT_ARGS=()
+            if [[ "$SKIP_PKG_INSTALL_EFFECTIVE" != "true" ]]; then
+                if declare -p PKGS >/dev/null 2>&1; then
+                    if [[ ${#PKGS[@]} -gt 0 ]]; then
+                        VIRT_ARGS+=("--install" "$(IFS=,; echo "${PKGS[*]}")")
+                    fi
+                fi
+            else
+                setStatus "Skipping package install per distro config" "*"
+            fi
+
+            if declare -p VIRT_CUSTOMIZE_OPTS >/dev/null 2>&1; then
+                if [[ ${#VIRT_CUSTOMIZE_OPTS[@]} -gt 0 ]]; then
+                    VIRT_ARGS+=("${VIRT_CUSTOMIZE_OPTS[@]}")
                 fi
             fi
-        else
-            setStatus "Skipping package install per distro config" "*"
-        fi
 
-        if declare -p VIRT_CUSTOMIZE_OPTS >/dev/null 2>&1; then
-            if [[ ${#VIRT_CUSTOMIZE_OPTS[@]} -gt 0 ]]; then
-                VIRT_ARGS+=("${VIRT_CUSTOMIZE_OPTS[@]}")
+            if [[ ${#VIRT_ARGS[@]} -gt 0 ]]; then
+                setStatus "Customizing image" "*"
+                if ! LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 LIBGUESTFS_TIMEOUT=600 virt-customize --network -a "$WORK_IMAGE" "${VIRT_ARGS[@]}"; then
+                    setStatus "Unable to customize image: $WORK_IMAGE" "f"
+                    BUILD_STEPS+=("image_customization:failed")
+                    BUILD_FAILED=1
+                else
+                    BUILD_STEPS+=("image_customization:success")
+                fi
             fi
         fi
 
-        if [[ ${#VIRT_ARGS[@]} -gt 0 ]]; then
-            setStatus "Customizing image" "*"
-            if ! LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 LIBGUESTFS_TIMEOUT=600 virt-customize --network -a "$WORK_IMAGE" "${VIRT_ARGS[@]}"; then
-                setStatus "Unable to customize image: $WORK_IMAGE" "f"
-                exit 1
-            fi
+        # Skip VM creation if build already failed during download/customization phase
+        if [[ $BUILD_FAILED -eq 1 ]]; then
+            cleanup_build_files
+            continue
         fi
 
         VM_NAME="${distro}-${version}"
@@ -1054,14 +1193,22 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         if ! qm create "${CREATE_ARGS[@]}"; then
             setStatus "Error creating VM." "f"
-            exit 1
+            BUILD_STEPS+=("vm_creation:failed")
+            BUILD_FAILED=1
+            cleanup_build_files
+            continue
         fi
+        BUILD_STEPS+=("vm_creation:success")
 
         setStatus "Importing disk into storage: ${storage}" "*"
         if ! qm importdisk "$vmid" "$WORK_IMAGE" "$storage"; then
             setStatus "Error importing disk." "f"
-            exit 1
+            BUILD_STEPS+=("disk_import:failed")
+            BUILD_FAILED=1
+            cleanup_build_files
+            continue
         fi
+        BUILD_STEPS+=("disk_import:success")
 
         setStatus "Attaching imported disk" "*"
         STORAGE_TYPE=$(pvesm status --storage "$storage" | awk 'NR == 2 {print $2}')
@@ -1093,20 +1240,32 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         if ! qm set "$vmid" --scsihw virtio-scsi-pci --scsi0 "$IMPORTED_DISKFILE"; then
             setStatus "Error attaching disk." "f"
-            exit 1
+            BUILD_STEPS+=("disk_attachment:failed")
+            BUILD_FAILED=1
+            cleanup_build_files
+            continue
         fi
+        BUILD_STEPS+=("disk_attachment:success")
 
         setStatus "Adding Cloud-Init CD-ROM" "*"
         if ! qm set "$vmid" --ide2 "${storage}:cloudinit"; then
             setStatus "Error adding Cloud-Init drive." "f"
-            exit 1
+            BUILD_STEPS+=("cloudinit_drive:failed")
+            BUILD_FAILED=1
+            cleanup_build_files
+            continue
         fi
+        BUILD_STEPS+=("cloudinit_drive:success")
 
         setStatus "Setting boot disk" "*"
         if ! qm set "$vmid" --boot c --bootdisk scsi0; then
             setStatus "Error setting boot disk." "f"
-            exit 1
+            BUILD_STEPS+=("boot_disk:failed")
+            BUILD_FAILED=1
+            cleanup_build_files
+            continue
         fi
+        BUILD_STEPS+=("boot_disk:success")
 
         TEMP_KEYS=$(mktemp)
         touch "$TEMP_KEYS"
@@ -1135,8 +1294,12 @@ for build_file in "${BUILD_FILES[@]}"; do
         if [[ ! -s "$TEMP_KEYS" ]]; then
             setStatus "No SSH keys found (file/url/id/inline)." "f"
             rm -f "$TEMP_KEYS"
-            exit 1
+            BUILD_STEPS+=("ssh_keys:failed")
+            BUILD_FAILED=1
+            cleanup_build_files
+            continue
         fi
+        BUILD_STEPS+=("ssh_keys:success")
 
         setStatus "Applying Cloud-Init settings" "*"
         QM_SET_ARGS=("$vmid" "--ciuser" "$CI_USER" "--cipassword" "$CI_PASSWORD" "--sshkeys" "$TEMP_KEYS" "--onboot" "1")
@@ -1148,14 +1311,20 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         if ! qm set "${QM_SET_ARGS[@]}"; then
             setStatus "Error applying Cloud-Init settings." "f"
-            exit 1
+            BUILD_STEPS+=("cloudinit_config:failed")
+            BUILD_FAILED=true
+            cleanup_build_files
+            continue
         fi
+        BUILD_STEPS+=("cloudinit_config:success")
 
         setStatus "Resizing disk to ${DISK_SIZE}" "*"
         ATTEMPT=0
+        RESIZE_SUCCESS=false
         while [[ $ATTEMPT -lt 5 ]]; do
             ATTEMPT=$((ATTEMPT + 1))
             if qm resize "$vmid" scsi0 "$DISK_SIZE"; then
+                RESIZE_SUCCESS=true
                 break
             fi
             if [[ $ATTEMPT -lt 5 ]]; then
@@ -1163,17 +1332,33 @@ for build_file in "${BUILD_FILES[@]}"; do
                 sleep 1
             else
                 setStatus " - Error resizing disk." "f"
-                exit 1
+                BUILD_STEPS+=("disk_resize:failed")
+                BUILD_FAILED=true
+                break
             fi
         done
+        if [[ "$RESIZE_SUCCESS" == "true" ]]; then
+            BUILD_STEPS+=("disk_resize:success")
+        fi
+
+        # Skip to next build if disk resize failed
+        if [[ "$BUILD_FAILED" == "true" ]]; then
+            cleanup_build_files
+            continue
+        fi
 
         qm rescan --vmid "$vmid"
 
         setStatus "Converting VM to template" "*"
         if ! qm template "$vmid"; then
             setStatus "Error converting to template." "f"
-            exit 1
+            BUILD_STEPS+=("template_conversion:failed")
+            BUILD_FAILED=true
+            cleanup_build_files
+            continue
         fi
+        BUILD_STEPS+=("template_conversion:success")
+        BUILD_COMPLETED=true
 
         setStatus "Completed template: ${VM_NAME} (VMID ${vmid})" "s"
         echo "======================================================================"
@@ -1216,11 +1401,113 @@ for build_file in "${BUILD_FILES[@]}"; do
         echo ""
         echo ""
 
-        rm -f "$TEMP_KEYS"
-        rm -f "$WORK_IMAGE"
+        # Cleanup temp files (always happens)
+        rm -f "$TEMP_KEYS" 2>/dev/null || true
+        rm -f "$WORK_IMAGE" 2>/dev/null || true
 
         if [[ "$CACHE_KEEP" != "true" ]]; then
-            rm -f "$IMAGE_ORIG" "$HASH_FILE"
+            rm -f "$IMAGE_ORIG" "$HASH_FILE" 2>/dev/null || true
+        fi
+
+        # Determine final build status based on completion and step results
+        if [[ "$BUILD_COMPLETED" == "true" ]]; then
+            # Check if all steps succeeded
+            FAILED_STEPS=0
+            for step in "${BUILD_STEPS[@]}"; do
+                if [[ "$step" == *":failed" ]]; then
+                    FAILED_STEPS=$((FAILED_STEPS + 1))
+                fi
+            done
+
+            if [[ $FAILED_STEPS -eq 0 ]]; then
+                # All steps succeeded
+                BUILD_RESULTS+=("${BUILD_KEY}|success")
+            else
+                # Completed but with warnings
+                BUILD_RESULTS+=("${BUILD_KEY}|warning")
+                BUILD_WARNINGS+=("${BUILD_KEY}|Template created but ${FAILED_STEPS} step(s) had issues")
+            fi
+        else
+            # Did not complete - this is a failure
+            # Find the first failed step to report
+            FAILURE_REASON="Build incomplete"
+            for step in "${BUILD_STEPS[@]}"; do
+                if [[ "$step" == *":failed" ]]; then
+                    step_name=$(echo "$step" | cut -d: -f1 | tr '_' ' ')
+                    FAILURE_REASON="${step_name} failed"
+                    break
+                fi
+            done
+            BUILD_RESULTS+=("${BUILD_KEY}|failure")
+            BUILD_ERRORS+=("${BUILD_KEY}|${FAILURE_REASON}")
         fi
     done
 done
+
+# Display final build summary
+echo ""
+echo "======================================================================"
+echo "F I N A L  B U I L D  S U M M A R Y"
+echo "======================================================================"
+
+if [[ ${#BUILD_RESULTS[@]} -eq 0 ]]; then
+    setStatus "No builds were executed." "f"
+else
+    SUCCESS_COUNT=0
+    WARNING_COUNT=0
+    FAILURE_COUNT=0
+
+    for result in "${BUILD_RESULTS[@]}"; do
+        IFS='|' read -r build_name status <<< "$result"
+        if [[ "$status" == "success" ]]; then
+            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        elif [[ "$status" == "warning" ]]; then
+            WARNING_COUNT=$((WARNING_COUNT + 1))
+        else
+            FAILURE_COUNT=$((FAILURE_COUNT + 1))
+        fi
+    done
+
+    echo "Total builds attempted: ${#BUILD_RESULTS[@]}"
+    echo -e "\e[32mSuccessful: ${SUCCESS_COUNT}\e[0m"
+    if [[ $WARNING_COUNT -gt 0 ]]; then
+        echo -e "\e[33mCompleted with warnings: ${WARNING_COUNT}\e[0m"
+    fi
+    echo -e "\e[31mFailed: ${FAILURE_COUNT}\e[0m"
+    echo ""
+
+    if [[ $SUCCESS_COUNT -gt 0 ]]; then
+        echo -e "\e[32m✓ Successful builds:\e[0m"
+        for result in "${BUILD_RESULTS[@]}"; do
+            IFS='|' read -r build_name status <<< "$result"
+            if [[ "$status" == "success" ]]; then
+                echo -e "  \e[32m✓\e[0m $build_name"
+            fi
+        done
+        echo ""
+    fi
+
+    if [[ $WARNING_COUNT -gt 0 ]]; then
+        echo -e "\e[33m⚠ Completed with warnings:\e[0m"
+        for warning in "${BUILD_WARNINGS[@]}"; do
+            IFS='|' read -r build_name reason <<< "$warning"
+            echo -e "  \e[33m⚠\e[0m $build_name - $reason"
+        done
+        echo ""
+    fi
+
+    if [[ $FAILURE_COUNT -gt 0 ]]; then
+        echo -e "\e[31m✗ Failed builds:\e[0m"
+        for error in "${BUILD_ERRORS[@]}"; do
+            IFS='|' read -r build_name reason <<< "$error"
+            echo -e "  \e[31m✗\e[0m $build_name - $reason"
+        done
+        echo ""
+    fi
+fi
+
+echo "======================================================================"
+
+if [[ $FAILURE_COUNT -gt 0 ]]; then
+    exit 1
+fi

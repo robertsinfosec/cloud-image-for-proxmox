@@ -30,7 +30,7 @@ This folder is a mock-up of a unified entrypoint + per-distro configs + batch bu
 
 VMIDs are **automatically generated** using the formula:
 ```
-{node_digit}{distro_digit}{version_digits}
+{1_node_digit}{1_distro_digit}{4_version_digits}
 ```
 
 **Components:**

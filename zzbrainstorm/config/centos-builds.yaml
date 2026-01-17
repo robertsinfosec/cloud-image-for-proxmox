@@ -8,3 +8,7 @@ builds:
     release: "9"
     version: "9"
     notes: "CentOS Stream 9 (GenericCloud)"
+  - distro: centos
+    release: "8"
+    version: "8"
+    notes: "CentOS Stream 8 (GenericCloud)"
