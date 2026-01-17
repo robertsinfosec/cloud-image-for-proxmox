@@ -1290,18 +1290,18 @@ wipe_non_system_disks() {
 
 deprovision_all() {
   local sysdisk="$1"
-  if [[ -n "$DEVICE" ]]; then
-    p_info "Deprovisioning target device: $DEVICE"
+  if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+    p_info "Deprovisioning filtered storage/disks: ${ONLY_FILTERS[*]}"
   else
     p_info "Deprovisioning all non-system storage"
   fi
 
   p_info "Deprovision plan (node-local, non-shared only)"
   printf '%s\n' "    - Remove node-local, non-shared Proxmox storages"
-  if [[ -n "$DEVICE" ]]; then
-    printf '%s\n' "    - Unmount and clean /etc/fstab entries for the target disk"
-    printf '%s\n' "    - Dismantle LVM/ZFS/MD on target disk (if not spanning other disks)"
-    printf '%s\n' "    - Wipe target disk to raw state"
+  if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+    printf '%s\n' "    - Unmount and clean /etc/fstab entries for filtered storage/disks"
+    printf '%s\n' "    - Dismantle LVM/ZFS/MD on filtered disks (if not spanning other disks)"
+    printf '%s\n' "    - Wipe filtered disks to raw state"
   else
     printf '%s\n' "    - Unmount and clean /etc/fstab entries under /mnt/disks"
     printf '%s\n' "    - Dismantle LVM/ZFS/MD on non-system disks"
@@ -1313,7 +1313,7 @@ deprovision_all() {
   cleanup_zfs_on_non_system_disks "$sysdisk"
   cleanup_mdraid_on_non_system_disks "$sysdisk"
 
-  if [[ -z "$DEVICE" ]]; then
+  if [[ ${#ONLY_FILTERS[@]} -eq 0 ]]; then
     ensure_fstab_writable
     run_cmd_str "Removing /etc/fstab entries for /mnt/disks" "sed -i '\\|[[:space:]]/mnt/disks/|d' /etc/fstab"
     if compgen -G "/mnt/disks/*" >/dev/null; then
@@ -1333,9 +1333,9 @@ print_summary_and_plan() {
   printf '\n'
   p_info "Summary"
   printf '%s\n' "    - System disk: $sysdisk"
-  if [[ -n "$DEVICE" ]]; then
-    printf '%s\n' "    - Target disk: $DEVICE"
-    printf '%s\n' "    - Goal: provision target disk only (system disk unchanged)"
+  if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+    printf '%s\n' "    - Filters: ${ONLY_FILTERS[*]}"
+    printf '%s\n' "    - Goal: provision filtered disks only (system disk unchanged)"
   else
     printf '%s\n' "    - Goal: OS-only system disk (expand /), no local-lvm"
     printf '%s\n' "    - ALL other disks are fair game and will be (re)provisioned as Proxmox storage"
@@ -1357,8 +1357,8 @@ print_summary_and_plan() {
 
   printf '\n'
   p_warn "Planned actions"
-  if [[ -n "$DEVICE" ]]; then
-    printf '%s\n' "    1) Provision target disk only ($DEVICE)"
+  if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+    printf '%s\n' "    1) Provision filtered disks only: ${ONLY_FILTERS[*]}"
     printf '%s\n' "       - If labeled HDD-${hd}X / SSD-${hd}X already: heal mount/fstab/storage"
     printf '%s\n' "       - Else: wipe, GPT single partition, ext4 format + label, mount, fstab, add Proxmox dir storage"
   else
@@ -1378,8 +1378,8 @@ main() {
   require_root
 
   if [[ "$MODE" == "show-available" ]]; then
-    if [[ -n "$DEVICE" ]]; then
-      die "--device is not valid with --show-available"
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+      die "--only is not valid with --show-available"
     fi
     require_cmd smartctl
     show_available_storage
@@ -1468,8 +1468,8 @@ main() {
     if [[ "$WHATIF" -eq 1 ]]; then
       whatif_summary_deprovision "$sysdisk"
     fi
-    if [[ -n "$DEVICE" ]]; then
-      p_warn "This is destructive for the target disk only. System disk will be untouched."
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+      p_warn "This is destructive for filtered storage/disks only: ${ONLY_FILTERS[*]}"
     else
       p_warn "This is destructive for ALL non-system storage and disks. System disk will be untouched."
     fi

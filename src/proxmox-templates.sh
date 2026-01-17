@@ -916,6 +916,8 @@ if [[ "$REMOVE_TEMPLATES" == "true" ]]; then
 fi
 
 if [[ "$VALIDATE" == "true" ]]; then
+    setStatus "Checking prerequisites for validation" "*"
+    check_yq
     setStatus "Validating configuration files" "*"
     
     VALIDATION_ERRORS=0
@@ -950,14 +952,14 @@ if [[ "$VALIDATE" == "true" ]]; then
         
         # Check YAML syntax
         if ! yq_read ".builds" "$build_file" >/dev/null 2>&1; then
-            echo "  ✗ YAML syntax error"
+            echo -e "  ${Red}✗${NC} YAML syntax error"
             VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
             continue
         fi
         
         build_count=$(yq_read ".builds | length" "$build_file" 2>/dev/null || echo "0")
         if [[ "$build_count" == "null" || "$build_count" == "0" || ! "$build_count" =~ ^[0-9]+$ ]]; then
-            echo "  ⚠ No builds defined"
+            echo -e "  ${Yellow}⚠${NC} No builds defined"
             VALIDATION_WARNINGS=$((VALIDATION_WARNINGS + 1))
             continue
         fi
@@ -978,26 +980,26 @@ if [[ "$VALIDATE" == "true" ]]; then
             
             # Check required fields
             if [[ -z "$distro" || "$distro" == "null" ]]; then
-                echo "    ✗ $BUILD_LABEL: Missing 'distro' field"
+                echo -e "    ${Red}✗${NC} $BUILD_LABEL: Missing 'distro' field"
                 VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
                 continue
             fi
             
             if [[ -z "$version" || "$version" == "null" ]]; then
-                echo "    ✗ $BUILD_LABEL: Missing 'version' field"
+                echo -e "    ${Red}✗${NC} $BUILD_LABEL: Missing 'version' field"
                 VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
                 continue
             fi
             
             if [[ -z "$release" || "$release" == "null" ]]; then
-                echo "    ✗ $BUILD_LABEL: Missing 'release' field"
+                echo -e "    ${Red}✗${NC} $BUILD_LABEL: Missing 'release' field"
                 VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
                 continue
             fi
             
             # Check distro config exists
             if [[ ! -f "$DISTROS_DIR/${distro}-config.sh" ]]; then
-                echo "    ✗ $BUILD_LABEL: Distro config not found: ${distro}-config.sh"
+                echo -e "    ${Red}✗${NC} $BUILD_LABEL: Distro config not found: ${distro}-config.sh"
                 VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
                 continue
             fi
@@ -1008,13 +1010,13 @@ if [[ "$VALIDATE" == "true" ]]; then
             source "$DISTROS_DIR/${distro}-config.sh"
             
             if [[ -z "${SHA256SUMS_PATH:-}" ]]; then
-                echo "    ⚠ $BUILD_LABEL: No SHA checksum available - downloads will NOT be validated"
+                echo -e "    ${Yellow}⚠${NC} $BUILD_LABEL: No SHA checksum available - downloads will NOT be validated"
                 VALIDATION_WARNINGS=$((VALIDATION_WARNINGS + 1))
             fi
             
             # Check catalog file exists
             if [[ ! -f "$CATALOG_DIR/${distro}-catalog.yaml" ]]; then
-                echo "    ⚠ $BUILD_LABEL: Catalog file not found: ${distro}-catalog.yaml"
+                echo -e "    ${Yellow}⚠${NC} $BUILD_LABEL: Catalog file not found: ${distro}-catalog.yaml"
                 VALIDATION_WARNINGS=$((VALIDATION_WARNINGS + 1))
             fi
             
@@ -1025,14 +1027,14 @@ if [[ "$VALIDATE" == "true" ]]; then
                 for entry in "${VMID_MAP[@]}"; do
                     IFS='|' read -r existing_vmid existing_build <<< "$entry"
                     if [[ "$existing_vmid" == "$vmid" ]]; then
-                        echo "    ✗ $BUILD_LABEL: VMID collision! $vmid already used by $existing_build"
+                        echo -e "    ${Red}✗${NC} $BUILD_LABEL: VMID collision! $vmid already used by $existing_build"
                         VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
                     fi
                 done
                 VMID_MAP+=("${vmid}|$(basename "$build_file"):#$((i+1))")
-                echo "    ✓ $BUILD_LABEL: $distro $version ($release) - VMID $vmid"
+                echo -e "    ${Green}✓${NC} $BUILD_LABEL: $distro $version ($release) - VMID $vmid"
             else
-                echo "    ✗ $BUILD_LABEL: Failed to generate VMID"
+                echo -e "    ${Red}✗${NC} $BUILD_LABEL: Failed to generate VMID"
                 VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
             fi
         done
@@ -1046,15 +1048,15 @@ if [[ "$VALIDATE" == "true" ]]; then
     echo "Total builds found: ${#VMID_MAP[@]}"
     
     if [[ $VALIDATION_WARNINGS -gt 0 ]]; then
-        echo -e "\e[33mWarnings: $VALIDATION_WARNINGS\e[0m"
+        echo -e "${Yellow}Warnings: $VALIDATION_WARNINGS${NC}"
     fi
     
     if [[ $VALIDATION_ERRORS -gt 0 ]]; then
-        echo -e "\e[31mErrors: $VALIDATION_ERRORS\e[0m"
+        echo -e "${Red}Errors: $VALIDATION_ERRORS${NC}"
         echo "======================================================================"
         exit 1
     else
-        echo -e "\e[32mErrors: 0\e[0m"
+        echo -e "${Green}Errors: 0${NC}"
         echo "======================================================================"
         setStatus "Validation passed successfully" "s"
         exit 0
