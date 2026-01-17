@@ -866,16 +866,53 @@ smart_life_remaining() {
 }
 
 show_available_storage() {
+  # Build device-to-storage mapping first
+  declare -A device_storage_map
+  
+  # Get all Proxmox storage and map to devices
+  while read -r storage_name; do
+    [[ -z "$storage_name" ]] && continue
+    [[ "$storage_name" == "local" || "$storage_name" == "local-lvm" ]] && continue
+    
+    # Get storage type
+    local storage_type
+    storage_type=$(pvesm status 2>/dev/null | grep "^${storage_name}" | awk '{print $2}')
+    
+    # For directory storage, find the device
+    if [[ "$storage_type" == "dir" ]]; then
+      local storage_path mount_device base_device
+      storage_path=$(pvesm path "${storage_name}:0" 2>/dev/null | sed 's|/0$||' || echo "")
+      
+      if [[ -n "$storage_path" ]]; then
+        mount_device=$(df "$storage_path" 2>/dev/null | tail -1 | awk '{print $1}')
+        
+        # Resolve to base disk device
+        if [[ -n "$mount_device" ]]; then
+          base_device=$(lsblk -no PKNAME "$mount_device" 2>/dev/null | head -1)
+          if [[ -z "$base_device" ]]; then
+            # No parent, strip partition number
+            base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
+          fi
+          
+          if [[ -n "$base_device" ]]; then
+            device_storage_map["$base_device"]="$storage_name"
+          fi
+        fi
+      fi
+    fi
+  done < <(pvesm status 2>/dev/null | tail -n +2 | awk '{print $1}')
+  
+  # Display device table with storage status
   p_info "Available storage summary"
   if [[ "$EXTENDED" -eq 1 ]]; then
-    printf '%-10s %-8s %-30s %-12s %-8s %-8s %-10s\n' "Device" "Size" "Model" "Media" "Health" "Temp" "Life"
+    printf '%-10s %-8s %-30s %-12s %-8s %-8s %-10s %-15s\n' "Device" "Size" "Model" "Media" "Health" "Temp" "Life" "Proxmox Storage"
   else
-    printf '%-10s %-8s %-30s %-20s\n' "Device" "Size" "Model" "Media"
+    printf '%-10s %-8s %-30s %-20s %-15s\n' "Device" "Size" "Model" "Media" "Proxmox Storage"
   fi
 
   mapfile -t disks < <(lsblk -dn -o NAME,TYPE | awk '$2=="disk"{print $1}')
   for name in "${disks[@]}"; do
-    local dev size model rotation health temp life
+    local dev size model rotation health temp life storage_status
     dev="/dev/$name"
     size="$(lsblk -dn -o SIZE "$dev" 2>/dev/null || echo "?")"
     model="$(smart_model "$dev")"
@@ -884,15 +921,82 @@ show_available_storage() {
       model="$(lsblk -dn -o MODEL "$dev" 2>/dev/null | xargs)"
       [[ -z "$model" ]] && model="unknown"
     fi
+    
+    # Check storage status
+    if [[ -n "${device_storage_map[$name]:-}" ]]; then
+      storage_status="${device_storage_map[$name]}"
+    else
+      storage_status="-"
+    fi
+    
     if [[ "$EXTENDED" -eq 1 ]]; then
       health="$(smart_health "$dev")"
       temp="$(smart_temp "$dev")"
       life="$(smart_life_remaining "$dev")"
-      printf '%-10s %-8s %-30s %-12s %-8s %-8s %-10s\n' "$dev" "$size" "$model" "$rotation" "$health" "$temp" "$life"
+      printf '%-10s %-8s %-30s %-12s %-8s %-8s %-10s %-15s\n' "$dev" "$size" "$model" "$rotation" "$health" "$temp" "$life" "$storage_status"
     else
-      printf '%-10s %-8s %-30s %-20s\n' "$dev" "$size" "$model" "$rotation"
+      printf '%-10s %-8s %-30s %-20s %-15s\n' "$dev" "$size" "$model" "$rotation" "$storage_status"
     fi
   done
+}
+
+show_storage_mapping() {
+  local node
+  node="$(hostname -s)"
+  
+  # Get existing Proxmox storage
+  local storage_list
+  storage_list=$(pvesm status 2>/dev/null | tail -n +2 | awk '{print $1}' || echo "")
+  
+  if [[ -z "$storage_list" ]]; then
+    return
+  fi
+  
+  # Check if there's any non-system storage
+  local has_storage=0
+  while IFS= read -r storage_name; do
+    [[ "$storage_name" == "local" || "$storage_name" == "local-lvm" ]] && continue
+    has_storage=1
+    break
+  done <<< "$storage_list"
+  
+  if [[ $has_storage -eq 0 ]]; then
+    return
+  fi
+  
+  echo ""
+  p_info "Proxmox storage to device mapping"
+  printf '%-15s %-8s %-12s %-10s %-30s\n' "Storage Name" "Type" "Device" "Size" "Mount Point"
+  
+  while IFS= read -r storage_name; do
+    [[ -z "$storage_name" ]] && continue
+    [[ "$storage_name" == "local" || "$storage_name" == "local-lvm" ]] && continue
+    
+    local storage_type storage_path mount_device base_device size mount_point
+    storage_type=$(pvesm status 2>/dev/null | grep "^${storage_name}" | awk '{print $2}')
+    
+    if [[ "$storage_type" == "dir" ]]; then
+      storage_path=$(pvesm path "${storage_name}:0" 2>/dev/null | sed 's|/0$||' || echo "")
+      mount_point="$storage_path"
+      
+      if [[ -n "$storage_path" ]]; then
+        mount_device=$(df "$storage_path" 2>/dev/null | tail -1 | awk '{print $1}')
+        
+        # Resolve to base disk device
+        if [[ -n "$mount_device" ]]; then
+          base_device=$(lsblk -no PKNAME "$mount_device" 2>/dev/null | head -1)
+          if [[ -z "$base_device" ]]; then
+            base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
+          fi
+          
+          if [[ -n "$base_device" ]]; then
+            size=$(lsblk -ndo SIZE "/dev/$base_device" 2>/dev/null || echo "?")
+            printf '%-15s %-8s %-12s %-10s %-30s\n' "$storage_name" "$storage_type" "/dev/$base_device" "$size" "$mount_point"
+          fi
+        fi
+      fi
+    fi
+  done <<< "$storage_list"
 }
 
 whatif_summary_provision() {
@@ -1383,6 +1487,7 @@ main() {
     fi
     require_cmd smartctl
     show_available_storage
+    show_storage_mapping
     exit 0
   fi
 
