@@ -866,6 +866,9 @@ smart_life_remaining() {
 }
 
 show_available_storage() {
+  local sysdisk
+  sysdisk="$(get_system_disk)"
+  
   # Build device-to-storage mapping first
   declare -A device_storage_map
   
