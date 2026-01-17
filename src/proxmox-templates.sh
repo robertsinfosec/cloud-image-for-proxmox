@@ -651,9 +651,13 @@ collect_build_meta() {
         return 1
     fi
 
-    if [[ -z "$BUILD_DISTRO" ]]; then
-        echo "ERROR: Missing required 'distro' field in $build_file (index $build_index)."
-        return 1
+    # If distro is not specified or is null, infer from build filename
+    if [[ -z "$BUILD_DISTRO" || "$BUILD_DISTRO" == "null" ]]; then
+        BUILD_DISTRO=$(basename "$build_file" | sed 's/-builds\.yaml$//')
+        if [[ -z "$BUILD_DISTRO" ]]; then
+            echo "ERROR: Could not determine distro from $build_file (index $build_index)."
+            return 1
+        fi
     fi
 
     # Auto-generate VMID if not provided
