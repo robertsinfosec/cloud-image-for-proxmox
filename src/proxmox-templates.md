@@ -41,7 +41,7 @@ A unified entrypoint for building Proxmox cloud-init VM templates across multipl
 ```
 
 > [!NOTE]
-> **Sensible Defaults & Batteries Included**: Running the script without any options shows the help screen. You must explicitly specify an action flag (`--build`, `--validate`, `--clean-cache`, or `--clean-templates`) to perform any operation.
+> **Sensible Defaults & Batteries Included**: Running the script without any options shows the help screen. You must explicitly specify an action flag (`--build`, `--validate`, `--clean-cache`, or `--remove-templates`) to perform any operation.
 
 ### Options
 
@@ -52,7 +52,8 @@ A unified entrypoint for building Proxmox cloud-init VM templates across multipl
 | `--configroot <path>` | Root directory containing config/ and distros/ |
 | `--validate` | Validate configuration files without building |
 | `--clean-cache` | Remove all cached images and checksums |
-| `--clean-templates` | Remove VM templates (use with --only to filter) |
+| `--remove-templates` | Remove VM templates (use with --only to filter) |
+| `--force` | Skip confirmation prompts (use with --remove-templates) |
 | `-h, --help` | Show help message |
 
 ### Examples
@@ -81,7 +82,10 @@ A unified entrypoint for building Proxmox cloud-init VM templates across multipl
 ./build-proxmox-templates.sh --build
 
 # Remove only Ubuntu templates
-./build-proxmox-templates.sh --clean-templates --only ubuntu
+./build-proxmox-templates.sh --remove-templates --only ubuntu
+
+# Remove templates without confirmation
+./build-proxmox-templates.sh --remove-templates --only ubuntu --force
 ```
 
 > [!TIP]
@@ -362,13 +366,16 @@ Remove VM templates from Proxmox:
 
 ```bash
 # Remove all configured templates (with confirmation)
-./build-proxmox-templates.sh --clean-templates
+./build-proxmox-templates.sh --remove-templates
 
 # Remove only Ubuntu templates
-./build-proxmox-templates.sh --clean-templates --only ubuntu
+./build-proxmox-templates.sh --remove-templates --only ubuntu
 
 # Remove specific version
-./build-proxmox-templates.sh --clean-templates --only debian:bookworm
+./build-proxmox-templates.sh --remove-templates --only debian:bookworm
+
+# Remove without confirmation (automation-friendly)
+./build-proxmox-templates.sh --remove-templates --only centos --force
 ```
 
 **How it works:**

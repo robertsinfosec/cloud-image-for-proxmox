@@ -145,7 +145,10 @@ cd src
 ./proxmox-templates.sh --clean-cache
 
 # Remove templates
-./proxmox-templates.sh --clean-templates --only centos
+./proxmox-templates.sh --remove-templates --only centos
+
+# Remove templates without confirmation
+./proxmox-templates.sh --remove-templates --only centos --force
 ```
 
 ---

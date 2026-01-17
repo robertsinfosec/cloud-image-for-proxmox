@@ -31,9 +31,10 @@ DEFAULTS_FILE=""
 
 ONLY_FILTERS=()
 CLEAN_CACHE=false
-CLEAN_TEMPLATES=false
+REMOVE_TEMPLATES=false
 VALIDATE=false
 BUILD=false
+FORCE=false
 
 # Auto-detect node digit from hostname (e.g., pve3 -> 3)
 HOSTNAME=$(hostname -s)
@@ -51,13 +52,15 @@ usage() {
     echo "  --only <distro[:release]>  Filter builds (repeatable), e.g. --only debian or --only debian:trixie"
     echo "  --configroot <path>        Root directory containing config/, distros/ (default: script directory)"
     echo "  --clean-cache              Remove all cached images and checksums"
-    echo "  --clean-templates          Remove VM templates (use with --only to filter which ones)"
+    echo "  --remove-templates         Remove VM templates (use with --only to filter which ones)"
+    echo "  --force                    Skip confirmation prompts (use with --remove-templates)"
     echo "  --validate                 Validate configuration files without building"
     echo "  -h, --help                 Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0 --build                 # Build all configured templates"
     echo "  $0 --build --only ubuntu   # Build only Ubuntu templates"
+    echo "  $0 --remove-templates --only ubuntu --force  # Remove Ubuntu templates without confirmation"
     echo "  $0 --validate              # Validate configuration without building"
     echo "  $0 --clean-cache           # Clean cached images"
 }
@@ -729,8 +732,11 @@ while [[ $# -gt 0 ]]; do
         --clean-cache)
             CLEAN_CACHE=true
             ;;
-        --clean-templates)
-            CLEAN_TEMPLATES=true
+        --remove-templates)
+            REMOVE_TEMPLATES=true
+            ;;
+        --force)
+            FORCE=true
             ;;
         --validate)
             VALIDATE=true
@@ -749,7 +755,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Check if any action flag is specified
-if [[ "$BUILD" != "true" && "$CLEAN_CACHE" != "true" && "$CLEAN_TEMPLATES" != "true" && "$VALIDATE" != "true" ]]; then
+if [[ "$BUILD" != "true" && "$CLEAN_CACHE" != "true" && "$REMOVE_TEMPLATES" != "true" && "$VALIDATE" != "true" ]]; then
     usage
     exit 0
 fi
@@ -796,7 +802,7 @@ if [[ "$CLEAN_CACHE" == "true" ]]; then
     exit 0
 fi
 
-if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
+if [[ "$REMOVE_TEMPLATES" == "true" ]]; then
     setStatus "Scanning for templates to remove" "*"
     
     # Load build files to determine which VMIDs to clean
@@ -875,10 +881,14 @@ if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
     done
     echo ""
     
-    read -r -p "Remove these templates? [y/N]: " reply
-    if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
-        setStatus "Cleanup cancelled" "q"
-        exit 0
+    if [[ "$FORCE" != "true" ]]; then
+        read -r -p "Remove these templates? [y/N]: " reply
+        if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
+            setStatus "Cleanup cancelled" "q"
+            exit 0
+        fi
+    else
+        setStatus "Force mode enabled, skipping confirmation" "*"
     fi
     
     for entry in "${EXISTING_TEMPLATES[@]}"; do
