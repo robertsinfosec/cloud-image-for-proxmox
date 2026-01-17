@@ -1097,8 +1097,8 @@ fi
 # Display auto-selected storage once (if using auto mode)
 if [[ "$DEFAULT_STORAGE" == "auto" ]] || echo "$DEFAULT_STORAGE" | grep -q "device:"; then
     # Parse storage preferences for display
-    local display_prefer="ssd"
-    local display_order="last"
+    display_prefer="ssd"
+    display_order="last"
     if echo "$DEFAULT_STORAGE" | grep -q "device:"; then
         display_prefer=$(echo "$DEFAULT_STORAGE" | yq eval '.prefer_type // "ssd"' -)
         display_order=$(echo "$DEFAULT_STORAGE" | yq eval '.select_order // "last"' -)
