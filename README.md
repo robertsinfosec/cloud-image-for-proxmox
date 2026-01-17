@@ -69,9 +69,9 @@ cd src
 [**→ Full Storage Documentation**](src/proxmox-storage.md)
 
 ### Template Management (`proxmox-templates.sh`)
+- ✅ **SHA-256 Checksum Validation** - Automatically verifies download integrity, freshness, and completeness
 - ✅ **Auto-VMID Generation** - Unique IDs based on node + distro + version
 - ✅ **Auto-Storage Selection** - Intelligently picks SSD/HDD based on availability
-- ✅ **SHA Checksum Validation** - Verifies downloads when checksums are available
 - ✅ **Build Tracking** - Success/Warning/Failure status for each template
 - ✅ **Configuration Validation** - Pre-flight checks before building
 - ✅ **Cleanup Operations** - Remove cache or templates selectively
@@ -94,8 +94,13 @@ All templates include:
 - ✅ Security hardening
 - ✅ SHA-256 verified downloads (when available from distribution)
 
-> [!NOTE]
-> Some distributions (e.g., [Oracle Linux](https://yum.oracle.com/oracle-linux-templates.html)) don't provide programmatic checksums. The script warns you during validation and build when checksums aren't available.
+> [!IMPORTANT]
+> **SHA-256 Checksum Validation** is a primary feature that protects you from:
+> - **Security risks** - Detects tampered or corrupted downloads
+> - **Incomplete downloads** - Catches partial/failed downloads before deployment
+> - **Stale images** - Ensures you're using the latest version (same filename may have updates)
+>
+> Some distributions (e.g., [Oracle Linux](https://yum.oracle.com/oracle-linux-templates.html)) don't provide programmatic checksums. The script prominently warns you during validation and build when checksums aren't available, so you can take extra care with those builds.
 
 ### Supported Distributions
 

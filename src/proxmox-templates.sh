@@ -20,7 +20,7 @@ LightGray='\033[0;37m'
 White='\033[1;37m'
 NC='\033[0m' # No Color
 
-Name='ProxMox Cloud Init Creator'
+Name='ProxMox Cloud Init Creator with SHA-256 Validation'
 Version='v2.0.0'
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -47,6 +47,8 @@ fi
 usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
+    echo "Automated cloud-init template builder with SHA-256 checksum validation"
+    echo ""
     echo "Options:"
     echo "  --build                    Build templates (required to start builds)"
     echo "  --only <distro[:release]>  Filter builds (repeatable), e.g. --only debian or --only debian:trixie"
@@ -56,6 +58,11 @@ usage() {
     echo "  --force                    Skip confirmation prompts (use with --remove)"
     echo "  --validate                 Validate configuration files without building"
     echo "  -h, --help                 Show this help message"
+    echo ""
+    echo "Primary Features:"
+    echo "  • SHA-256 validation (when available) ensures download security & integrity"
+    echo "  • Warnings displayed for distributions without checksum support"
+    echo "  • Automated VMID generation and storage selection"
     echo ""
     echo "Examples:"
     echo "  $0 --build                 # Build all configured templates"
@@ -79,6 +86,9 @@ setStatus() {
         ;;
         f)
             echo -e "[${Red}-${NC}] ${LightRed}${description}${NC}"
+        ;;
+        w)
+            echo -e "[${Yellow}!${NC}] ${Yellow}${description}${NC}"
         ;;
         q)
             echo -e "[${LightPurple}?${NC}] ${LightPurple}${description}${NC}"
@@ -1294,8 +1304,8 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         # Check if checksum validation is available
         if [[ -z "${SHA256SUMS_PATH:-}" ]]; then
-            setStatus "WARNING: No SHA checksum available for ${distro}" "q"
-            setStatus "Downloaded image will NOT be validated - use with caution!" "q"
+            setStatus "WARNING: No SHA checksum available for ${distro}" "w"
+            setStatus "Downloaded image will NOT be validated - use with caution!" "w"
             HASHES_MATCH=1  # Skip validation loop
             BUILD_STEPS+=("checksum_validation:skipped")
             

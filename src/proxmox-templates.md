@@ -216,7 +216,13 @@ Each build tracks these phases:
 - `template_conversion` - Converting VM to template
 
 > [!IMPORTANT]
-> **SHA Checksum Validation**: Downloaded images are **always** validated against SHA-256 checksums when available from the distribution. For distributions that don't provide programmatic checksums (e.g., [Oracle Linux](https://yum.oracle.com/oracle-linux-templates.html)), a warning is displayed during both `--validate` and `--build` operations. Use these templates with appropriate caution in production environments.
+> **SHA Checksum Validation**: Downloaded images are **always** validated against SHA-256 checksums when available from the distribution. This validation is critical for three reasons:
+> 
+> - **Security**: Verifies the file hasn't been altered since the distribution built the image, protecting against tampering or man-in-the-middle attacks
+> - **Freshness**: Ensures you have the latest version. Distributions often update images with the same filename to include security patches and updates. Without checksum validation, you might unknowingly use an outdated, vulnerable image
+> - **Completeness**: Confirms the download finished successfully. Partial or corrupted downloads will fail validation, preventing build failures or broken templates later in the process
+> 
+> For distributions that don't provide programmatic checksums (e.g., [Oracle Linux](https://yum.oracle.com/oracle-linux-templates.html)), a warning is displayed during both `--validate` and `--build` operations. Use these templates with appropriate caution in production environments.
 
 ### Summary Output Example
 
