@@ -1030,7 +1030,6 @@ show_storage_mapping() {
   # If no mappings were displayed, show message
   if [[ $found_mappings -eq 0 ]]; then
     echo "  No device allocations found"
-    echo ""
   fi
 }
 
