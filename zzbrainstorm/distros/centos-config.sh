@@ -5,7 +5,7 @@ IMAGE_URL_BASE="https://cloud.centos.org/centos"
 
 if [[ "$RELEASE" == "8" || "$RELEASE" == "8-stream" ]]; then
   RELEASE_STREAM="8-stream"
-  IMAGE_NAME_TEMPLATE="CentOS-Stream-GenericCloud-8-latest.0.x86_64.qcow2"
+  IMAGE_NAME_TEMPLATE="CentOS-Stream-GenericCloud-8-latest.x86_64.qcow2"
 else
   RELEASE_STREAM="9-stream"
   IMAGE_NAME_TEMPLATE="CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2"
