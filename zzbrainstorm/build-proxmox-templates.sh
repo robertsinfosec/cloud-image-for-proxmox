@@ -140,13 +140,11 @@ check_libguestfs() {
 }
 
 check_dhcpcd() {
-    # Check if dhcpcd (DHCP client) is available for libguestfs appliance
-    if ! dpkg-query -W -f='${Status}' dhcpcd-base 2>/dev/null | grep -q "install ok installed" && \
-       ! dpkg-query -W -f='${Status}' dhcpcd5 2>/dev/null | grep -q "install ok installed" && \
-       ! dpkg-query -W -f='${Status}' isc-dhcp-client 2>/dev/null | grep -q "install ok installed"; then
+    # Check if dhcpcd-base is available for libguestfs appliance
+    if ! dpkg-query -W -f='${Status}' dhcpcd-base 2>/dev/null | grep -q "install ok installed"; then
         if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
-            echo "ERROR: A DHCP client is required for libguestfs networking."
-            echo "libguestfs needs dhcpcd-base (or dhclient) to configure network access inside the appliance."
+            echo "ERROR: dhcpcd-base is required for libguestfs networking."
+            echo "libguestfs needs dhcpcd-base to configure network access inside the appliance."
             echo "Without it, virt-customize cannot install packages due to DNS resolution failures."
             echo "Install: apt-get install dhcpcd-base"
             exit 1
