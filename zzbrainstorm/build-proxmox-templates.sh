@@ -783,18 +783,37 @@ if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
             # For cleanup, we only need distro/version/release to calculate VMID
             # No need to resolve storage since qm destroy works regardless of storage location
             distro=$(basename "$build_file" | sed 's/-builds\.yaml$//')
-            version=$(yq_read ".builds[$i].version" "$build_file")
-            release=$(yq_read ".builds[$i].release" "$build_file")
             
+            # Try to get version first, then release (user might specify either)
+            version=$(yq_read ".builds[$i].version" "$build_file" || echo "")
+            release=$(yq_read ".builds[$i].release" "$build_file" || echo "")
+            
+            # If version is null/empty, try to look it up from catalog using release
+            if [[ -z "$version" || "$version" == "null" ]]; then
+                if [[ -n "$release" && "$release" != "null" ]]; then
+                    # Look up version from catalog (CATALOG_DIR not set yet, use SCRIPT_DIR)
+                    catalog_file="$SCRIPT_DIR/catalog/${distro}-catalog.yaml"
+                    if [[ -f "$catalog_file" ]]; then
+                        version=$(yq_read ".releases[] | select(.release == \"$release\") | .version" "$catalog_file" || echo "")
+                    fi
+                fi
+            fi
+            
+            # If still no version, skip this build
             if [[ -z "$version" || "$version" == "null" ]]; then
                 continue
             fi
+            
+            # If release is null/empty, use version
             if [[ -z "$release" || "$release" == "null" ]]; then
                 release="$version"
             fi
             
             # Calculate VMID using the same logic as build phase
-            vmid=$(generate_vmid "$distro" "$version")
+            vmid=$(generate_vmid "$distro" "$version" || echo "")
+            if [[ -z "$vmid" ]]; then
+                continue
+            fi
             
             if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
                 matched=false
