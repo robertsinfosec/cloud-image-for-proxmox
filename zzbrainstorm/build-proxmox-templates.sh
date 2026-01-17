@@ -429,24 +429,44 @@ extract_hash_from_file() {
     local image_name=$2
 
     local hash
+    # Try standard format: hash *filename or hash filename
     hash=$(grep -E "(\*| )${image_name}$" "$hash_file" | awk '{print $1}' | head -n1)
     if [[ -n "$hash" ]]; then
         echo "$hash"
         return 0
     fi
 
+    # Try BSD format: SHA256 (filename) = hash
     hash=$(grep -E "SHA256 \(${image_name}\)" "$hash_file" | awk -F '=' '{print $2}' | xargs | head -n1)
     if [[ -n "$hash" ]]; then
         echo "$hash"
         return 0
     fi
 
+    # Try BSD format: SHA512 (filename) = hash
     hash=$(grep -E "SHA512 \(${image_name}\)" "$hash_file" | awk -F '=' '{print $2}' | xargs | head -n1)
     if [[ -n "$hash" ]]; then
         echo "$hash"
         return 0
     fi
 
+    # Try without .0 suffix (CentOS quirk: file is named "8-latest.0" but checksum has "8-latest")
+    local image_name_no_dot0="${image_name/.0./.}"
+    if [[ "$image_name_no_dot0" != "$image_name" ]]; then
+        hash=$(grep -E "SHA256 \(${image_name_no_dot0}\)" "$hash_file" | awk -F '=' '{print $2}' | xargs | head -n1)
+        if [[ -n "$hash" ]]; then
+            echo "$hash"
+            return 0
+        fi
+        
+        hash=$(grep -E "(\*| )${image_name_no_dot0}$" "$hash_file" | awk '{print $1}' | head -n1)
+        if [[ -n "$hash" ]]; then
+            echo "$hash"
+            return 0
+        fi
+    fi
+
+    # Fallback: single field (hash only)
     hash=$(awk 'NF==1 {print $1}' "$hash_file" | head -n1)
     if [[ -n "$hash" ]]; then
         echo "$hash"
