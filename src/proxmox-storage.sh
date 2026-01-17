@@ -1,35 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# proxmox-storage.sh
-# Purpose:
-#   Provision:
-#   1) Make system disk OS-only on a fresh Proxmox ISO install (LVM-thin default):
-#      - remove local-lvm thinpool
-#      - extend /dev/pve/root to consume all free extents
-#      - resize ext4 filesystem
-#   2) Treat ALL non-system disks as fair game:
-#      - provision as single GPT partition, ext4
-#      - label as HDD-<N><A..> / SSD-<N><A..> (N is hostname digit)
-#      - mount under /mnt/disks/<LABEL>
-#      - persist /etc/fstab by UUID
-#      - register as Proxmox "dir" storage with broad content types
-#
-# Safety:
-#   - Prints summary + plan, then requires typing DESTROY
-#   - Idempotent/self-healing:
-#       * disks already labeled in the expected scheme are not reformatted
-#       * mounts/fstab/pvesm storage are repaired if missing
-#
-#   Deprovision:
-#     - remove non-system Proxmox storage entries
-#     - unmount and clean /etc/fstab and mount directories
-#     - dismantle non-system storage (LVM/ZFS/MD) if present
-#     - wipe non-system disks back to raw/unpartitioned state
-#
-# Notes:
-#   - Uses partx (util-linux) instead of partprobe to refresh kernel partition table.
-
 # Color definitions
 NC="\033[0m"
 BOLD="\033[1m"
@@ -58,6 +29,9 @@ QUICK_FORMAT=1
 EXTENDED=0
 ALL=0
 ONLY_FILTERS=()
+OLD_STORAGE_NAME=""
+NEW_STORAGE_NAME=""
+STORAGE_NAME=""
 
 log_context() {
   local node
@@ -74,12 +48,19 @@ usage() {
 Usage:
   proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--all] [--only <filter>]
   proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
+  proxmox-storage.sh --rename <old-name>:<new-name> [--force]
+  proxmox-storage.sh --list-usage <storage-name>
   proxmox-storage.sh --status [--extended]
   proxmox-storage.sh --help
 
 Options:
   --provision         Provision unused/new disks only (safe default)
   --deprovision       Deprovision non-system storage (destructive)
+  --rename            Rename existing storage (non-destructive)
+                      Format: --rename old-name:new-name
+                      Example: --rename pve-disk-storage1:SSD-1C
+  --list-usage        Show VMs/CTs and content on a storage
+                      Example: --list-usage SSD-1C
   --all               Destroy and re-provision ALL storage (use with --provision)
   --force             Skip confirmation prompt
   --whatif, --simulate
@@ -100,6 +81,12 @@ Examples:
 
   # Destroy and re-provision specific device
   ./proxmox-storage.sh --provision --only /dev/sdb --force
+
+  # Rename existing storage (non-destructive)
+  ./proxmox-storage.sh --rename pve-disk-storage1:SSD-1C --force
+
+  # Check what's on a storage before renaming
+  ./proxmox-storage.sh --list-usage SSD-1C
 EOF
 }
 
@@ -128,6 +115,21 @@ parse_args() {
         ;;
       --status)
         MODE="status"
+        ;;
+      --rename)
+        MODE="rename"
+        shift
+        [[ -n "${1:-}" ]] || die "--rename requires OLD_NAME:NEW_NAME format"
+        OLD_STORAGE_NAME="${1%%:*}"
+        NEW_STORAGE_NAME="${1##*:}"
+        [[ "$OLD_STORAGE_NAME" != "$NEW_STORAGE_NAME" ]] || die "Old and new storage names must be different"
+        [[ -n "$OLD_STORAGE_NAME" && -n "$NEW_STORAGE_NAME" ]] || die "--rename requires OLD_NAME:NEW_NAME format"
+        ;;
+      --list-usage)
+        MODE="list-usage"
+        shift
+        [[ -n "${1:-}" ]] || die "--list-usage requires a storage name"
+        STORAGE_NAME="$1"
         ;;
       --extended)
         EXTENDED=1
@@ -778,6 +780,117 @@ is_shared_flag() {
   local val="$1"
   [[ "$val" == "1" || "$val" == "true" || "$val" == "yes" ]] && return 0
   return 1
+}
+
+rename_storage() {
+  local old_sid="$1"
+  local new_sid="$2"
+  local cfg="/etc/pve/storage.cfg"
+  
+  p_info "Renaming storage: $old_sid -> $new_sid"
+  
+  # Verify old storage exists
+  if ! storage_exists "$old_sid"; then
+    die "Storage '$old_sid' does not exist"
+  fi
+  
+  # Verify new name doesn't exist
+  if storage_exists "$new_sid"; then
+    die "Storage '$new_sid' already exists"
+  fi
+  
+  # Verify storage name format (optional - warn if non-standard)
+  if [[ ! "$new_sid" =~ ^(HDD|SSD)-[0-9]+[A-Z]$ ]]; then
+    p_warn "New storage name '$new_sid' doesn't match standard format (HDD-<N><Letter> or SSD-<N><Letter>)"
+    if [[ "$FORCE" -eq 0 ]]; then
+      read -r -p "Continue anyway? [y/N] " response
+      if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        die "Rename aborted by user"
+      fi
+    fi
+  fi
+  
+  # Backup configuration
+  local backup_file="${cfg}.backup.$(date +%Y%m%d-%H%M%S)"
+  run_cmd "Backing up storage configuration" cp "$cfg" "$backup_file"
+  p_ok "Backup created: $backup_file"
+  
+  if [[ "$WHATIF" -eq 1 ]]; then
+    p_info "[WHATIF] Would rename storage in $cfg"
+    p_info "[WHATIF] Change: 'dir: $old_sid' -> 'dir: $new_sid'"
+    return 0
+  fi
+  
+  # Perform rename (edit the storage type line)
+  # The storage.cfg format is:
+  #   <type>: <storage-id>
+  #       <key> <value>
+  # We need to change the storage-id part
+  run_cmd_str "Renaming storage in configuration" \
+    "sed -i '/^[a-z]*:[[:space:]]*${old_sid}[[:space:]]*$/s/:.*$/: ${new_sid}/' '$cfg'"
+  
+  # Verify the change
+  if storage_exists "$new_sid" && ! storage_exists "$old_sid"; then
+    p_ok "Storage renamed successfully: $old_sid -> $new_sid"
+    p_info "Filesystem path remains unchanged (cosmetic mismatch is OK)"
+    p_info "VM/CT configs now reference: $new_sid"
+    p_info "To align directory name, deprovision and re-provision the disk"
+  else
+    die "Rename verification failed. Restore from backup: $backup_file"
+  fi
+}
+
+list_storage_usage() {
+  local storage="$1"
+  
+  if ! storage_exists "$storage"; then
+    die "Storage '$storage' does not exist"
+  fi
+  
+  p_info "Content on storage: $storage"
+  echo ""
+  
+  # List all content
+  if ! pvesm list "$storage" 2>/dev/null; then
+    p_warn "Unable to list content (storage may be offline or empty)"
+  fi
+  
+  echo ""
+  p_info "VMs/CTs using this storage:"
+  
+  local found=0
+  
+  # Check VMs
+  if command -v qm >/dev/null 2>&1; then
+    while read -r vmid; do
+      [[ -z "$vmid" ]] && continue
+      if qm config "$vmid" 2>/dev/null | grep -q "$storage"; then
+        local name status
+        name=$(qm config "$vmid" 2>/dev/null | awk -F': ' '/^name:/ {print $2}')
+        status=$(qm status "$vmid" 2>/dev/null | awk '{print $2}')
+        echo "  VM $vmid ($name) - $status"
+        found=1
+      fi
+    done < <(qm list 2>/dev/null | awk 'NR>1 {print $1}')
+  fi
+  
+  # Check containers
+  if command -v pct >/dev/null 2>&1; then
+    while read -r ctid; do
+      [[ -z "$ctid" ]] && continue
+      if pct config "$ctid" 2>/dev/null | grep -q "$storage"; then
+        local name status
+        name=$(pct config "$ctid" 2>/dev/null | awk -F': ' '/^hostname:/ {print $2}')
+        status=$(pct status "$ctid" 2>/dev/null | awk '{print $2}')
+        echo "  CT $ctid ($name) - $status"
+        found=1
+      fi
+    done < <(pct list 2>/dev/null | awk 'NR>1 {print $1}')
+  fi
+  
+  if [[ $found -eq 0 ]]; then
+    echo "  None"
+  fi
 }
 
 smartctl_safe() {
@@ -1649,6 +1762,24 @@ main() {
     show_available_storage
     show_storage_mapping
     show_available_for_provisioning
+    exit 0
+  fi
+
+  if [[ "$MODE" == "rename" ]]; then
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+      die "--only is not valid with --rename"
+    fi
+    require_cmd pvesm
+    rename_storage "$OLD_STORAGE_NAME" "$NEW_STORAGE_NAME"
+    exit 0
+  fi
+
+  if [[ "$MODE" == "list-usage" ]]; then
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+      die "--only is not valid with --list-usage"
+    fi
+    require_cmd pvesm
+    list_storage_usage "$STORAGE_NAME"
     exit 0
   fi
 

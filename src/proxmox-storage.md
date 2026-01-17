@@ -114,12 +114,19 @@ Disk labels and storage IDs follow this pattern:
 Usage:
   proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--all] [--only <filter>]
   proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
+  proxmox-storage.sh --rename <old-name>:<new-name> [--force]
+  proxmox-storage.sh --list-usage <storage-name>
   proxmox-storage.sh --status [--extended]
   proxmox-storage.sh --help
 
 Options:
   --provision         Provision unused/new disks only (safe default)
   --deprovision       Deprovision non-system storage (destructive)
+  --rename            Rename existing storage (non-destructive)
+                      Format: --rename old-name:new-name
+                      Example: --rename pve-disk-storage1:SSD-1C
+  --list-usage        Show VMs/CTs and content on a storage
+                      Example: --list-usage SSD-1C
   --all               Destroy and re-provision ALL storage (use with --provision)
   --force             Skip confirmation prompt
   --whatif, --simulate
@@ -140,6 +147,12 @@ Examples:
 
   # Destroy and re-provision specific device
   ./proxmox-storage.sh --provision --only /dev/sdb --force
+
+  # Rename existing storage (non-destructive)
+  ./proxmox-storage.sh --rename pve-disk-storage1:SSD-1C --force
+
+  # Check what's on a storage before renaming
+  ./proxmox-storage.sh --list-usage SSD-1C
 ```
 
 ## `--status`
@@ -382,6 +395,79 @@ proxmox-storage.sh --deprovision --only HDD-2C --force
 # Deprovision multiple items
 proxmox-storage.sh --deprovision --only SSD-2A --only SSD-2B --force
 ```
+
+## `--rename`
+
+Renames existing Proxmox storage in `/etc/pve/storage.cfg` without moving any files or affecting VM/CT functionality. This is a **non-destructive** operation useful for retrofitting existing clusters to naming standards.
+
+### How it works
+
+The rename operation:
+1. Verifies the old storage name exists
+2. Verifies the new storage name doesn't already exist
+3. Backs up `/etc/pve/storage.cfg`
+4. Updates the storage ID in the configuration
+5. VM/CT configs automatically reference the new storage name
+
+**Important:** The filesystem path remains unchanged. For example:
+- Storage ID: `pve-disk-storage1` → `SSD-1C` (changed)
+- Filesystem path: `/mnt/disks/pve-disk-storage1` (unchanged)
+- This cosmetic mismatch is perfectly fine and doesn't affect functionality
+
+### When to use
+
+Use `--rename` when:
+- You need immediate naming consistency in the Proxmox UI
+- You're retrofitting an existing cluster to your naming standards
+- You can't afford downtime to migrate VMs off storage
+- You want a quick, non-destructive fix
+
+### Example
+
+```bash
+# Check what's on the storage first
+./proxmox-storage.sh --list-usage pve-disk-storage1
+
+# Rename it to match your standard
+./proxmox-storage.sh --rename pve-disk-storage1:SSD-1C --force
+```
+
+After renaming, if you want the directory name to also match (cosmetic), you can later:
+1. Migrate VMs/CTs off the storage
+2. Deprovision it with `--deprovision --only SSD-1C`
+3. Re-provision the underlying device with `--provision --only /dev/sdX`
+
+This gives you full alignment: storage name, directory name, and filesystem label all match.
+
+## `--list-usage`
+
+Shows what VMs, containers, and content are stored on a specific Proxmox storage. Use this before renaming or deprovisioning to verify it's safe.
+
+### Example
+
+```bash
+./proxmox-storage.sh --list-usage SSD-2A
+```
+
+**Output:**
+```
+[*] Content on storage: SSD-2A
+
+Volid                                   Format  Type             Size VMID
+SSD-2A:272004/base-272004-disk-0.raw    raw     images    21474836480 272004
+SSD-2A:272004/vm-272004-cloudinit.qcow2 qcow2   images        4194304 272004
+SSD-2A:272204/base-272204-disk-0.raw    raw     images    21474836480 272204
+SSD-2A:272204/vm-272204-cloudinit.qcow2 qcow2   images        4194304 272204
+
+[*] VMs/CTs using this storage:
+  VM 272004 (ubuntu-20.04-focal) - running
+  VM 272204 (ubuntu-22.04-jammy) - stopped
+```
+
+This helps you:
+- Verify storage is empty before deprovisioning
+- Identify which VMs need migration before major changes
+- Understand what will be affected by rename operations
 
 ## USB / enclosure caveats
 

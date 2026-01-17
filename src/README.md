@@ -26,12 +26,19 @@ Below is the detailed usage information:
 Usage:
   proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--all] [--only <filter>]
   proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
+  proxmox-storage.sh --rename <old-name>:<new-name> [--force]
+  proxmox-storage.sh --list-usage <storage-name>
   proxmox-storage.sh --status [--extended]
   proxmox-storage.sh --help
 
 Options:
   --provision         Provision unused/new disks only (safe default)
   --deprovision       Deprovision non-system storage (destructive)
+  --rename            Rename existing storage (non-destructive)
+                      Format: --rename old-name:new-name
+                      Example: --rename pve-disk-storage1:SSD-1C
+  --list-usage        Show VMs/CTs and content on a storage
+                      Example: --list-usage SSD-1C
   --all               Destroy and re-provision ALL storage (use with --provision)
   --force             Skip confirmation prompt
   --whatif, --simulate
@@ -52,6 +59,12 @@ Examples:
 
   # Destroy and re-provision specific device
   ./proxmox-storage.sh --provision --only /dev/sdb --force
+
+  # Rename existing storage (non-destructive)
+  ./proxmox-storage.sh --rename pve-disk-storage1:SSD-1C --force
+
+  # Check what's on a storage before renaming
+  ./proxmox-storage.sh --list-usage SSD-1C
 ```
 
 > Documentation: [proxmox-storage.md](proxmox-storage.md)
