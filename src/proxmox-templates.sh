@@ -1102,6 +1102,11 @@ if [[ ${#BUILD_FILES[@]} -eq 0 ]]; then
 fi
 setStatus "Found ${#BUILD_FILES[@]} build file(s)" "s"
 
+# Show filters if any are applied
+if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+    setStatus "Applying filters: ${ONLY_FILTERS[*]}" "*"
+fi
+
 setStatus "Planning build execution" "*"
 PLANNED_BUILDS=()
 for build_file in "${BUILD_FILES[@]}"; do
@@ -1239,8 +1244,8 @@ for build_file in "${BUILD_FILES[@]}"; do
         # Check for image_filename override (needed for Oracle Linux and other special cases)
         IMAGE_FILENAME_OVERRIDE=$(resolve_value "$build_file" "$i" "image_filename" "")
         if [[ -n "$IMAGE_FILENAME_OVERRIDE" && "$IMAGE_FILENAME_OVERRIDE" != "null" ]]; then
-            # Override the IMAGE_PATH with the specific filename
-            IMAGE_PATH="${IMAGE_PATH%/*}/${IMAGE_FILENAME_OVERRIDE}"
+            # Append the specific filename to the IMAGE_PATH
+            IMAGE_PATH="${IMAGE_PATH%/}/${IMAGE_FILENAME_OVERRIDE}"
         fi
 
         SKIP_PKG_INSTALL_EFFECTIVE="${SKIP_PKG_INSTALL:-false}"
