@@ -101,8 +101,8 @@ Disk labels and storage IDs follow this pattern:
 
 ```
 Usage:
-  proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--device <path>]
-  proxmox-storage.sh --deprovision [--force] [--whatif] [--device <path>]
+  proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--only <filter>]
+  proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
   proxmox-storage.sh --show-available [--extended]
   proxmox-storage.sh --help
 
@@ -115,7 +115,8 @@ Options:
   --full-format       Slower, full ext4 format (default is quick)
   --show-available    Show available storage summary and exit
   --extended          Show additional SMART health fields
-  --device <path>     Target a single disk device (e.g., /dev/sde)
+  --only <filter>     Filter to specific device(s) or storage name(s) (repeatable)
+                      Examples: --only /dev/sdb  --only HDD-2C  --only SSD-3A
   --help              Show this help
 ```
 
@@ -197,21 +198,32 @@ proxmox-storage.sh --provision --force
 > [!TIP]
 > Use `--whatif` first to preview the plan without making changes.
 
-### Target a single device
+### Filter to specific devices or storage
 
-If you need to provision only one disk without touching any others, add `--device`:
+If you need to provision only specific disk(s) without touching others, use `--only` (repeatable):
 
-```
-proxmox-storage.sh --provision --device /dev/sde
+```bash
+# Provision a single device
+proxmox-storage.sh --provision --only /dev/sde
+
+# Provision multiple devices
+proxmox-storage.sh --provision --only /dev/sdb --only /dev/sdc
+
+# Provision by storage name (if already labeled)
+proxmox-storage.sh --provision --only HDD-2C
+
+# Mix device paths and storage names
+proxmox-storage.sh --provision --only /dev/sdb --only SSD-3A
 ```
 
 > [!TIP]
-> Use `lsblk` to see what disks are attached and identify the correct device path.
+> Use `lsblk` to see attached disks and identify the correct device path. Use `--show-available` to see existing storage labels.
 
-When `--device` is used:
+When `--only` is used:
 
 - The system disk reclaim step is skipped.
-- A quick read‑probe is performed before destructive actions.
+- A quick read-probe is performed before destructive actions.
+- Only disks matching the specified filter(s) are processed.
 
 ## `--deprovision`
 
@@ -228,12 +240,19 @@ Typical usage:
 proxmox-storage.sh --deprovision --force
 ```
 
-### Target a single device
+### Filter to specific devices or storage
 
-To deprovision just one disk, use `--device`:
+To deprovision just specific disk(s) or storage, use `--only` (repeatable):
 
-```
-proxmox-storage.sh --deprovision --device /dev/sde
+```bash
+# Deprovision a single device
+proxmox-storage.sh --deprovision --only /dev/sde
+
+# Deprovision by storage name
+proxmox-storage.sh --deprovision --only HDD-2C --force
+
+# Deprovision multiple items
+proxmox-storage.sh --deprovision --only SSD-2A --only SSD-2B --force
 ```
 
 ## USB / enclosure caveats

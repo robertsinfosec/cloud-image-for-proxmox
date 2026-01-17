@@ -56,19 +56,23 @@ FORCE=0
 WHATIF=0
 QUICK_FORMAT=1
 EXTENDED=0
-DEVICE=""
+ONLY_FILTERS=()
 
 log_context() {
   local node
   node="$(hostname -s)"
-  p_info "Context: node=$node mode=${MODE:-unset} whatif=$WHATIF force=$FORCE full_format=$((1-QUICK_FORMAT)) device=${DEVICE:-all}"
+  local filters="all"
+  if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+    filters="${ONLY_FILTERS[*]}"
+  fi
+  p_info "Context: node=$node mode=${MODE:-unset} whatif=$WHATIF force=$FORCE full_format=$((1-QUICK_FORMAT)) filters=$filters"
 }
 
 usage() {
   cat <<'EOF'
 Usage:
-  proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--device <path>]
-  proxmox-storage.sh --deprovision [--force] [--whatif] [--device <path>]
+  proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--only <filter>]
+  proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
   proxmox-storage.sh --show-available [--extended]
   proxmox-storage.sh --help
 
@@ -81,7 +85,8 @@ Options:
   --full-format       Slower, full ext4 format (default is quick)
   --show-available    Show available storage summary and exit
   --extended          Show additional SMART health fields
-  --device <path>     Target a single disk device (e.g., /dev/sde)
+  --only <filter>     Filter to specific device(s) or storage name(s) (repeatable)
+                      Examples: --only /dev/sdb  --only HDD-2C  --only SSD-3A
   --help              Show this help
 EOF
 }
@@ -115,10 +120,10 @@ parse_args() {
       --extended)
         EXTENDED=1
         ;;
-      --device)
+      --only)
         shift
-        [[ -n "${1:-}" ]] || die "--device requires a device path (e.g., /dev/sde)"
-        DEVICE="$1"
+        [[ -n "${1:-}" ]] || die "--only requires a value (device path or storage name)"
+        ONLY_FILTERS+=("$1")
         ;;
       --help|-h)
         usage
@@ -471,6 +476,48 @@ is_on_system_disk() {
   is_on_disk "$dev" "$sysdisk"
 }
 
+matches_any_filter() {
+  local disk="$1"
+  local storage_name="${2:-}"
+  
+  # If no filters specified, everything matches
+  if [[ ${#ONLY_FILTERS[@]} -eq 0 ]]; then
+    return 0
+  fi
+  
+  # Check each filter
+  for filter in "${ONLY_FILTERS[@]}"; do
+    # Check if filter is a storage name (e.g., HDD-2C)
+    if [[ "$filter" =~ ^[a-zA-Z]+-[0-9]+[A-Z]$ ]]; then
+      if [[ "$storage_name" == "$filter" ]]; then
+        return 0
+      fi
+      # Also check partition label on the disk
+      local part label
+      part="$(get_first_partition "$disk" 2>/dev/null || true)"
+      if [[ -n "$part" ]]; then
+        label="$(blkid -o value -s LABEL "$part" 2>/dev/null || true)"
+        if [[ "$label" == "$filter" ]]; then
+          return 0
+        fi
+      fi
+    else
+      # Filter is a device path
+      local normalized_filter="$filter"
+      if [[ "$filter" != /dev/* ]]; then
+        normalized_filter="/dev/$filter"
+      fi
+      normalized_filter="$(readlink -f "$normalized_filter" 2>/dev/null || echo "$normalized_filter")"
+      
+      if [[ "$disk" == "$normalized_filter" ]]; then
+        return 0
+      fi
+    fi
+  done
+  
+  return 1
+}
+
 list_non_system_disks() {
   local sysdisk="$1"
   mapfile -t disks < <(lsblk -dn -o NAME,TYPE | awk '$2=="disk"{print "/dev/"$1}')
@@ -482,17 +529,58 @@ list_non_system_disks() {
 
 list_target_disks() {
   local sysdisk="$1"
-  if [[ -n "$DEVICE" ]]; then
-    printf '%s\n' "$DEVICE"
-  else
-    list_non_system_disks "$sysdisk"
+  local all_disks=()
+  
+  # Get all non-system disks
+  mapfile -t all_disks < <(list_non_system_disks "$sysdisk")
+  
+  # If no filters specified, return all disks
+  if [[ ${#ONLY_FILTERS[@]} -eq 0 ]]; then
+    printf '%s\n' "${all_disks[@]}"
+    return
   fi
+  
+  # Apply filters
+  local matched_disks=()
+  for disk in "${all_disks[@]}"; do
+    for filter in "${ONLY_FILTERS[@]}"; do
+      # Normalize filter (could be /dev/sdb, sdb, HDD-2C, etc.)
+      local normalized_filter="$filter"
+      if [[ "$filter" =~ ^[a-zA-Z]+-[0-9]+[A-Z]$ ]]; then
+        # This is a storage name like HDD-2C - we'll match it later after provisioning check
+        # For now, we need to check if this disk already has this label
+        local part
+        part="$(get_first_partition "$disk" || true)"
+        if [[ -n "$part" ]]; then
+          local existing_label
+          existing_label="$(blkid -o value -s LABEL "$part" 2>/dev/null || true)"
+          if [[ "$existing_label" == "$filter" ]]; then
+            matched_disks+=("$disk")
+            break
+          fi
+        fi
+      else
+        # This is a device path
+        if [[ "$filter" != /dev/* ]]; then
+          normalized_filter="/dev/$filter"
+        fi
+        normalized_filter="$(readlink -f "$normalized_filter" 2>/dev/null || echo "$normalized_filter")"
+        
+        if [[ "$disk" == "$normalized_filter" ]]; then
+          matched_disks+=("$disk")
+          break
+        fi
+      fi
+    done
+  done
+  
+  printf '%s\n' "${matched_disks[@]}"
 }
 
 normalize_device() {
   local dev="$1"
   dev="$(echo "$dev" | xargs)"
-  [[ -n "$dev" ]] || die "--device requires a device path (e.g., /dev/sde)"
+  [[ -n "$dev" ]] || die "--only requires a device path or storage name"
   if [[ "$dev" != /dev/* ]]; then
     dev="/dev/$dev"
   fi
@@ -521,7 +609,7 @@ validate_device() {
   local typ state ro base
   typ="$(lsblk -dn -o TYPE "$dev" 2>/dev/null || true)"
   [[ -n "$typ" ]] || die "Device not found in lsblk: $dev"
-  [[ "$typ" == "disk" ]] || die "--device must be a disk device (e.g., /dev/sde), not a partition: $dev"
+  [[ "$typ" == "disk" ]] || die "--only must specify a disk device (e.g., /dev/sde), not a partition: $dev"
 
   base="$(basename "$dev")"
   if [[ ! -b "$dev" && ! -e "/sys/block/$base" ]]; then
@@ -545,8 +633,8 @@ provision_data_disks() {
   local sysdisk="$1"
   local hd="$2"
 
-  if [[ -n "$DEVICE" ]]; then
-    p_info "Provisioning target disk as Proxmox storage: target=$DEVICE sysdisk=$sysdisk hostdigit=$hd"
+  if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+    p_info "Provisioning filtered disk(s) as Proxmox storage: filters=[${ONLY_FILTERS[*]}] sysdisk=$sysdisk hostdigit=$hd"
   else
     p_info "Provisioning non-system disks as Proxmox storage (fair game): sysdisk=$sysdisk hostdigit=$hd"
   fi
@@ -867,25 +955,29 @@ whatif_summary_deprovision() {
     if is_shared_flag "${storage_shared[$sid]:-}"; then
       continue
     fi
-    if [[ -n "$DEVICE" ]]; then
-      local target_label target_part path_match label_match
-      target_part="$(get_first_partition "$DEVICE" || true)"
-      target_label=""
-      if [[ -n "$target_part" ]]; then
-        target_label="$(blkid -o value -s LABEL "$target_part" 2>/dev/null || true)"
-      fi
-      path_match=0
-      label_match=0
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+      local path_match=0 label_match=0 src=""
+      
+      # Check if path matches any filter
       if [[ -n "${storage_paths[$sid]:-}" ]]; then
-        local src
         src="$(findmnt -n -o SOURCE --target "${storage_paths[$sid]}" 2>/dev/null || true)"
-        if [[ -n "$src" ]] && is_on_disk "$src" "$DEVICE"; then
-          path_match=1
+        if [[ -n "$src" ]]; then
+          local disk
+          disk="$(lsblk -no PKNAME "$src" 2>/dev/null || echo "$src")"
+          if [[ "$disk" != /dev/* ]]; then
+            disk="/dev/$disk"
+          fi
+          if matches_any_filter "$disk" "$sid"; then
+            path_match=1
+          fi
         fi
       fi
-      if [[ -n "$target_label" && "$sid" == "$target_label" ]]; then
+      
+      # Check if storage name matches any filter
+      if matches_any_filter "" "$sid"; then
         label_match=1
       fi
+      
       if [[ "$path_match" -eq 0 && "$label_match" -eq 0 ]]; then
         continue
       fi
@@ -953,22 +1045,23 @@ deprovision_storage_entries() {
         p_warn "Skipping storage '$sid' on system disk path: $path"
         continue
       fi
-      if [[ -n "$DEVICE" && -n "$src" ]] && is_on_disk "$src" "$DEVICE"; then
-        path_match=1
+      if [[ ${#ONLY_FILTERS[@]} -gt 0 && -n "$src" ]]; then
+        local disk
+        disk="$(lsblk -no PKNAME "$src" 2>/dev/null || echo "$src")"
+        if [[ "$disk" != /dev/* ]]; then
+          disk="/dev/$disk"
+        fi
+        if matches_any_filter "$disk" "$sid"; then
+          path_match=1
+        fi
       fi
     fi
-    if [[ -n "$DEVICE" ]]; then
-      local target_label target_part
-      target_part="$(get_first_partition "$DEVICE" || true)"
-      target_label=""
-      if [[ -n "$target_part" ]]; then
-        target_label="$(blkid -o value -s LABEL "$target_part" 2>/dev/null || true)"
-      fi
-      if [[ -n "$target_label" && "$sid" == "$target_label" ]]; then
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+      if matches_any_filter "" "$sid"; then
         label_match=1
       fi
       if [[ "$path_match" -eq 0 && "$label_match" -eq 0 ]]; then
-        p_warn "Skipping storage '$sid' (not on target device $DEVICE)"
+        p_warn "Skipping storage '$sid' (does not match filters: ${ONLY_FILTERS[*]})"
         continue
       fi
     fi
@@ -1005,8 +1098,13 @@ cleanup_lvm_on_non_system_disks() {
     else
       vgs_seen["$vg"]=1
     fi
-    if [[ -n "$DEVICE" ]]; then
-      if is_on_disk "$pv" "$DEVICE"; then
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+      local disk
+      disk="$(lsblk -no PKNAME "$pv" 2>/dev/null || echo "$pv")"
+      if [[ "$disk" != /dev/* ]]; then
+        disk="/dev/$disk"
+      fi
+      if matches_any_filter "$disk"; then
         vgs_has_target["$vg"]=1
       else
         vgs_has_other["$vg"]=1
@@ -1023,9 +1121,9 @@ cleanup_lvm_on_non_system_disks() {
       p_warn "Skipping VG $vg (has PV on system disk)"
       continue
     fi
-    if [[ -n "$DEVICE" ]]; then
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
       if [[ -z "${vgs_has_target[$vg]:-}" ]]; then
-        p_warn "Skipping VG $vg (not on target device $DEVICE)"
+        p_warn "Skipping VG $vg (does not match filters: ${ONLY_FILTERS[*]})"
         continue
       fi
       if [[ -n "${vgs_has_other[$vg]:-}" ]]; then
@@ -1054,8 +1152,13 @@ cleanup_lvm_on_non_system_disks() {
       p_warn "Skipping PV $pv (VG $vg has system-disk PV)"
       continue
     fi
-    if [[ -n "$DEVICE" ]]; then
-      if ! is_on_disk "$pv" "$DEVICE"; then
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+      local disk
+      disk="$(lsblk -no PKNAME "$pv" 2>/dev/null || echo "$pv")"
+      if [[ "$disk" != /dev/* ]]; then
+        disk="/dev/$disk"
+      fi
+      if ! matches_any_filter "$disk"; then
         continue
       fi
       if [[ -z "${vgs_removed[$vg]:-}" ]]; then
@@ -1081,11 +1184,18 @@ cleanup_zfs_on_non_system_disks() {
       if ! is_on_system_disk "$v" "$sysdisk"; then
         hit=1
       fi
-      if [[ -n "$DEVICE" ]] && ! is_on_disk "$v" "$DEVICE"; then
-        all_on_target=0
+      if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+        local disk
+        disk="$(lsblk -no PKNAME "$v" 2>/dev/null || echo "$v")"
+        if [[ "$disk" != /dev/* ]]; then
+          disk="/dev/$disk"
+        fi
+        if ! matches_any_filter "$disk"; then
+          all_on_target=0
+        fi
       fi
     done
-    if [[ -n "$DEVICE" ]]; then
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
       if [[ "$hit" -eq 1 && "$all_on_target" -eq 1 ]]; then
         run_cmd "Destroying ZFS pool $pool" zpool destroy "$pool"
       elif [[ "$hit" -eq 1 ]]; then
@@ -1113,11 +1223,18 @@ cleanup_mdraid_on_non_system_disks() {
       if ! is_on_system_disk "$m" "$sysdisk"; then
         hit=1
       fi
-      if [[ -n "$DEVICE" ]] && ! is_on_disk "$m" "$DEVICE"; then
-        all_on_target=0
+      if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+        local disk
+        disk="$(lsblk -no PKNAME "$m" 2>/dev/null || echo "$m")"
+        if [[ "$disk" != /dev/* ]]; then
+          disk="/dev/$disk"
+        fi
+        if ! matches_any_filter "$disk"; then
+          all_on_target=0
+        fi
       fi
     done
-    if [[ -n "$DEVICE" ]]; then
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
       if [[ "$hit" -eq 1 && "$all_on_target" -eq 1 ]]; then
         run_cmd "Stopping MD array /dev/$md" mdadm --stop "/dev/$md"
         for m in "${members[@]}"; do
@@ -1306,12 +1423,25 @@ main() {
   p_ok "Hostname digit: $hd"
   p_ok "System disk: $sysdisk"
 
-  if [[ -n "$DEVICE" ]]; then
-    DEVICE="$(normalize_device "$DEVICE")"
-    validate_device "$DEVICE"
-    if is_on_system_disk "$DEVICE" "$sysdisk"; then
-      die "Target device $DEVICE is the system disk. Refusing to operate."
-    fi
+  # Validate all filters and normalize device paths
+  if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+    local normalized_filters=()
+    for filter in "${ONLY_FILTERS[@]}"; do
+      # If it looks like a storage name (e.g., HDD-2C), keep as-is
+      if [[ "$filter" =~ ^[a-zA-Z]+-[0-9]+[A-Z]$ ]]; then
+        normalized_filters+=("$filter")
+      else
+        # It's a device path - normalize and validate
+        local normalized
+        normalized="$(normalize_device "$filter")"
+        validate_device "$normalized"
+        if is_on_system_disk "$normalized" "$sysdisk"; then
+          die "Filter device $normalized is the system disk. Refusing to operate."
+        fi
+        normalized_filters+=("$normalized")
+      fi
+    done
+    ONLY_FILTERS=("${normalized_filters[@]}")
   fi
 
   if [[ "$MODE" == "provision" ]]; then
@@ -1322,16 +1452,16 @@ main() {
       p_warn "Full format enabled: slower but uses default inode density"
     fi
     print_summary_and_plan "$sysdisk" "$hd"
-    if [[ -n "$DEVICE" ]]; then
-      p_warn "This is destructive for the target disk only: $DEVICE"
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+      p_warn "This is destructive for filtered disks only: ${ONLY_FILTERS[*]}"
     else
       p_warn "This is destructive for ALL non-system disks that are not already labeled in the expected scheme."
     fi
     confirm_destroy
-    if [[ -z "$DEVICE" ]]; then
+    if [[ ${#ONLY_FILTERS[@]} -eq 0 ]]; then
       reclaim_system_disk
     else
-      p_warn "Target disk mode: skipping system disk reclaim."
+      p_warn "Filtered mode: skipping system disk reclaim."
     fi
     provision_data_disks "$sysdisk" "$hd"
   else

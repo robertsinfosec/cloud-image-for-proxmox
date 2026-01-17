@@ -125,13 +125,19 @@ All templates include:
 cd src
 
 # Preview what will be provisioned
-./proxmox-storage.sh --list
+./proxmox-storage.sh --show-available
 
 # Provision all available disks (with confirmation)
 ./proxmox-storage.sh --provision
 
 # Force provision without confirmation (automation-friendly)
 ./proxmox-storage.sh --provision --force
+
+# Provision only specific device(s)
+./proxmox-storage.sh --provision --only /dev/sdb --force
+
+# Provision only specific storage (by name)
+./proxmox-storage.sh --provision --only HDD-2C --force
 ```
 
 ### Template Building
