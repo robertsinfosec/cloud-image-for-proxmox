@@ -906,7 +906,11 @@ show_available_storage() {
   done < <(parse_storage_cfg)
   
   # Display device table with storage status
-  p_info "Available storage summary"
+  echo "╔════════════════════════════════════════════════════════════════════════════════╗"
+  echo "║ PHYSICAL STORAGE DEVICES"
+  echo "╚════════════════════════════════════════════════════════════════════════════════╝"
+  echo ""
+  
   if [[ "$EXTENDED" -eq 1 ]]; then
     printf '%-10s %-8s %-30s %-12s %-8s %-8s %-10s %-15s\n' "Device" "Size" "Model" "Media" "Health" "Temp" "Life" "Proxmox Storage"
   else
@@ -1018,6 +1022,110 @@ show_storage_mapping() {
     echo "    Device: ${mount_device}"
     echo ""
   done
+}
+
+show_available_for_provisioning() {
+  local sysdisk
+  sysdisk="$(get_system_disk)"
+  
+  # Build device-to-storage mapping
+  declare -A device_storage_map
+  while IFS='|' read -r type sid path nodes shared; do
+    [[ -n "$sid" ]] || continue
+    [[ "$sid" == "local" || "$sid" == "local-lvm" ]] && continue
+    
+    if [[ -z "$path" ]]; then
+      continue
+    fi
+    
+    local mount_device base_device
+    mount_device=$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || echo "")
+    
+    if [[ -n "$mount_device" ]]; then
+      if [[ "$mount_device" =~ ^/dev/mapper/ ]] || [[ "$mount_device" =~ ^/dev/dm- ]]; then
+        local vg_name pv_device
+        vg_name=$(lvs --noheadings -o vg_name "$mount_device" 2>/dev/null | xargs || echo "")
+        if [[ -n "$vg_name" ]]; then
+          pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$vg_name" '$2==vg {print $1}' | head -1)
+          if [[ -n "$pv_device" ]]; then
+            base_device=$(echo "$pv_device" | sed 's|/dev/||; s|[0-9]*$||')
+          fi
+        fi
+      else
+        base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
+      fi
+      
+      if [[ -n "$base_device" ]]; then
+        device_storage_map["$base_device"]="$sid"
+      fi
+    fi
+  done < <(parse_storage_cfg)
+  
+  # Find unallocated devices
+  local available_devices=()
+  mapfile -t disks < <(lsblk -dn -o NAME,TYPE | awk '$2=="disk"{print $1}')
+  
+  for name in "${disks[@]}"; do
+    local dev="/dev/$name"
+    
+    # Skip system disk
+    if [[ "$dev" == "$sysdisk" ]]; then
+      continue
+    fi
+    
+    # Skip if already allocated to Proxmox storage
+    if [[ -n "${device_storage_map[$name]:-}" ]]; then
+      continue
+    fi
+    
+    # This device is available
+    local size model
+    size=$(lsblk -dn -o SIZE "$dev" 2>/dev/null || echo "?")
+    model=$(smart_model "$dev")
+    if [[ "$model" == "unknown" ]]; then
+      model=$(lsblk -dn -o MODEL "$dev" 2>/dev/null | xargs || echo "Unknown")
+    fi
+    
+    available_devices+=("$dev|$size|$model")
+  done
+  
+  # Display available devices
+  if [[ ${#available_devices[@]} -eq 0 ]]; then
+    return
+  fi
+  
+  echo ""
+  echo "╔════════════════════════════════════════════════════════════════════════════════╗"
+  echo "║ AVAILABLE FOR PROVISIONING"
+  echo "╚════════════════════════════════════════════════════════════════════════════════╝"
+  echo ""
+  
+  if [[ ${#available_devices[@]} -eq 1 ]]; then
+    # Single device - show detailed message
+    IFS='|' read -r dev size model <<< "${available_devices[0]}"
+    echo -e "  ${C_WARN}${dev}${NC} is available for Proxmox storage (${size}, ${model})"
+    echo ""
+    echo "  To provision it, run:"
+    echo ""
+    echo -e "    ${C_INFO}./proxmox-storage.sh --provision --only ${dev}${NC}"
+  else
+    # Multiple devices - show list
+    echo "  The following devices are available for Proxmox storage:"
+    echo ""
+    for entry in "${available_devices[@]}"; do
+      IFS='|' read -r dev size model <<< "$entry"
+      echo -e "    ${C_WARN}${dev}${NC} (${size}, ${model})"
+    done
+    echo ""
+    echo "  To provision them, run:"
+    echo ""
+    echo -e "    ${C_INFO}# Provision all available devices${NC}"
+    echo -e "    ${C_INFO}./proxmox-storage.sh --provision --force${NC}"
+    echo ""
+    echo -e "    ${C_INFO}# Or provision specific device(s)${NC}"
+    echo -e "    ${C_INFO}./proxmox-storage.sh --provision --only /dev/sdX${NC}"
+  fi
+  echo ""
 }
 
 whatif_summary_provision() {
@@ -1509,6 +1617,7 @@ main() {
     require_cmd smartctl
     show_available_storage
     show_storage_mapping
+    show_available_for_provisioning
     exit 0
   fi
 
