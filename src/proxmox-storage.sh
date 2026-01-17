@@ -1023,12 +1023,14 @@ show_storage_mapping() {
     echo -e "  ${C_OK}${sid}${NC} (${storage_type})${device_info}"
     echo "    Mount: ${storage_path}"
     echo "    Device: ${mount_device}"
+    echo ""
     found_mappings=1
   done
   
   # If no mappings were displayed, show message
   if [[ $found_mappings -eq 0 ]]; then
     echo "  No device allocations found"
+    echo ""
   fi
 }
 
@@ -1102,7 +1104,6 @@ show_available_for_provisioning() {
     return
   fi
   
-  echo ""
   echo "╔════════════════════════════════════════════════════════════════════════════════╗"
   echo "║ AVAILABLE FOR PROVISIONING"
   echo "╚════════════════════════════════════════════════════════════════════════════════╝"
