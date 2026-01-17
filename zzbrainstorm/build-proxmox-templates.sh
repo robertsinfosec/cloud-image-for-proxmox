@@ -308,8 +308,29 @@ generate_vmid() {
     local version="$2"
     
     local distro_digit=$(get_distro_digit "$distro")
-    local version_digits=$(echo "$version" | tr -d '.' | head -c 4)
-    version_digits=$(printf "%04d" "$version_digits" 2>/dev/null || echo "0000")
+    
+    # Parse version as major.minor format
+    # Split on '.' and take first two parts
+    local major minor
+    IFS='.' read -r major minor rest <<< "$version"
+    
+    # Pad major to 2 digits (left padding)
+    major=$(printf "%02d" "$major" 2>/dev/null || echo "00")
+    
+    # Pad minor to 2 digits (right padding - so "6" becomes "60", not "06")
+    if [[ -n "$minor" ]]; then
+        # If minor has only 1 digit, append 0 (6 → 60)
+        # If minor has 2+ digits, take first 2 (04 → 04, 210 → 21)
+        if [[ ${#minor} -eq 1 ]]; then
+            minor="${minor}0"
+        else
+            minor="${minor:0:2}"
+        fi
+    else
+        minor="00"
+    fi
+    
+    local version_digits="${major}${minor}"
     
     echo "${NODE_DIGIT}${distro_digit}${version_digits}"
 }
@@ -318,10 +339,11 @@ auto_select_storage() {
     local quiet_mode="${1:-false}"
     local storages
     
-    storages=$(pvesm status --enabled 1 2>/dev/null | awk 'NR>1 {print $1}')
+    # Get only storage available on THIS node (active status)
+    storages=$(pvesm status --enabled 1 2>/dev/null | awk 'NR>1 && $2=="active" {print $1}')
     
     if [[ -z "$storages" ]]; then
-        echo "ERROR: No storage found on this node." >&2
+        echo "ERROR: No active storage found on this node." >&2
         return 1
     fi
     
@@ -359,7 +381,7 @@ auto_select_storage() {
             setStatus "No SSD storage found. Using: $selected_storage (last HDD found)" "q" >&2
         fi
     else
-        echo "ERROR: No suitable storage found (all storage is excluded or local-only)." >&2
+        echo "ERROR: No suitable storage found on this node (all storage is excluded or local-only)." >&2
         return 1
     fi
     
