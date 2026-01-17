@@ -5,17 +5,20 @@ A unified entrypoint for building Proxmox cloud-init VM templates across multipl
 ## Quick Start
 
 ```bash
+# Show help and available options
+./build-proxmox-templates.sh
+
 # Validate configuration files
 ./build-proxmox-templates.sh --validate
 
 # Build all configured templates
-./build-proxmox-templates.sh
+./build-proxmox-templates.sh --build
 
 # Build specific distribution
-./build-proxmox-templates.sh --only ubuntu
+./build-proxmox-templates.sh --build --only ubuntu
 
 # Build specific version
-./build-proxmox-templates.sh --only debian:bookworm
+./build-proxmox-templates.sh --build --only debian:bookworm
 ```
 
 ## Features
@@ -37,10 +40,14 @@ A unified entrypoint for building Proxmox cloud-init VM templates across multipl
 ./build-proxmox-templates.sh [OPTIONS]
 ```
 
+> [!NOTE]
+> **Sensible Defaults & Batteries Included**: Running the script without any options shows the help screen. You must explicitly specify an action flag (`--build`, `--validate`, `--clean-cache`, or `--clean-templates`) to perform any operation.
+
 ### Options
 
 | Option | Description |
 |--------|-------------|
+| `--build` | Build templates (required to start builds) |
 | `--only <distro[:release]>` | Filter builds (repeatable) |
 | `--configroot <path>` | Root directory containing config/ and distros/ |
 | `--validate` | Validate configuration files without building |
@@ -51,21 +58,27 @@ A unified entrypoint for building Proxmox cloud-init VM templates across multipl
 ### Examples
 
 ```bash
+# Show help screen
+./build-proxmox-templates.sh
+
+# Build all configured templates
+./build-proxmox-templates.sh --build
+
 # Build only Debian templates
-./build-proxmox-templates.sh --only debian
+./build-proxmox-templates.sh --build --only debian
 
 # Build only Debian Bookworm
-./build-proxmox-templates.sh --only debian:bookworm
+./build-proxmox-templates.sh --build --only debian:bookworm
 
 # Build multiple specific distros
-./build-proxmox-templates.sh --only ubuntu --only debian
+./build-proxmox-templates.sh --build --only ubuntu --only debian
 
 # Validate all configuration files
 ./build-proxmox-templates.sh --validate
 
 # Clean cache before building
 ./build-proxmox-templates.sh --clean-cache
-./build-proxmox-templates.sh
+./build-proxmox-templates.sh --build
 
 # Remove only Ubuntu templates
 ./build-proxmox-templates.sh --clean-templates --only ubuntu
@@ -436,4 +449,4 @@ The script ignores `*.disabled` files.
 Combine multiple `--only` filters:
 
 ```bash
-./build-proxmox-templates.sh --only ubuntu --only debian --only rocky
+./build-proxmox-templates.sh --build --only ubuntu --only debian --only rocky

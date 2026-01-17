@@ -33,6 +33,7 @@ ONLY_FILTERS=()
 CLEAN_CACHE=false
 CLEAN_TEMPLATES=false
 VALIDATE=false
+BUILD=false
 
 # Auto-detect node digit from hostname (e.g., pve3 -> 3)
 HOSTNAME=$(hostname -s)
@@ -46,12 +47,19 @@ usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
+    echo "  --build                    Build templates (required to start builds)"
     echo "  --only <distro[:release]>  Filter builds (repeatable), e.g. --only debian or --only debian:trixie"
     echo "  --configroot <path>        Root directory containing config/, distros/ (default: script directory)"
     echo "  --clean-cache              Remove all cached images and checksums"
     echo "  --clean-templates          Remove VM templates (use with --only to filter which ones)"
     echo "  --validate                 Validate configuration files without building"
     echo "  -h, --help                 Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0 --build                 # Build all configured templates"
+    echo "  $0 --build --only ubuntu   # Build only Ubuntu templates"
+    echo "  $0 --validate              # Validate configuration without building"
+    echo "  $0 --clean-cache           # Clean cached images"
 }
 
 setStatus() {
@@ -705,6 +713,9 @@ matches_filter() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --build)
+            BUILD=true
+            ;;
         --only)
             shift
             [[ -n "${1:-}" ]] || { echo "ERROR: --only requires a value"; exit 1; }
@@ -736,6 +747,12 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+
+# Check if any action flag is specified
+if [[ "$BUILD" != "true" && "$CLEAN_CACHE" != "true" && "$CLEAN_TEMPLATES" != "true" && "$VALIDATE" != "true" ]]; then
+    usage
+    exit 0
+fi
 
 CONFIG_DIR="$CONFIG_ROOT/config"
 DISTROS_DIR="$CONFIG_ROOT/distros"
@@ -1012,6 +1029,12 @@ if [[ "$VALIDATE" == "true" ]]; then
         setStatus "Validation passed successfully" "s"
         exit 0
     fi
+fi
+
+# Only proceed with build if --build flag was specified
+if [[ "$BUILD" != "true" ]]; then
+    # If we got here, it means one of the other action flags was used and completed
+    exit 0
 fi
 
 setStatus "Checking runtime prerequisites" "*"
