@@ -1938,6 +1938,13 @@ else
             IFS='|' read -r build_name status <<< "$result"
             if [[ "$status" == "success" ]]; then
                 echo -e "  \e[32m✓\e[0m $build_name"
+                # Check if this build has any warnings
+                for warning in "${BUILD_WARNINGS[@]}"; do
+                    IFS='|' read -r warn_build warn_reason <<< "$warning"
+                    if [[ "$warn_build" == "$build_name" ]]; then
+                        echo -e "      \e[33m⚠ Warning:\e[0m $warn_reason"
+                    fi
+                done
             fi
         done
         echo ""
