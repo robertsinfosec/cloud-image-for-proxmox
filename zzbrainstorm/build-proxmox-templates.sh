@@ -327,7 +327,16 @@ auto_select_storage() {
     local ssds=()
     local hdds=()
     
+    # Exclude system/local storage from consideration
+    local excluded_pattern="^(local|local-lvm|pve)$"
+    
     while IFS= read -r storage; do
+        # Skip excluded storage
+        if [[ "$storage" =~ $excluded_pattern ]]; then
+            continue
+        fi
+        
+        # Categorize as SSD or HDD
         if [[ "$storage" =~ (ssd|nvme|flash) ]]; then
             ssds+=("$storage")
         else
@@ -335,18 +344,20 @@ auto_select_storage() {
         fi
     done <<< "$storages"
     
+    local selected_storage=""
+    
     if [[ ${#ssds[@]} -gt 0 ]]; then
-        echo "${ssds[-1]}"
-        setStatus "Auto-selected storage: ${ssds[-1]} (last SSD found)" "*"
+        selected_storage="${ssds[-1]}"
+        setStatus "Auto-selected storage: $selected_storage (last SSD found)" "*" >&2
     elif [[ ${#hdds[@]} -gt 0 ]]; then
-        echo "${hdds[-1]}"
-        setStatus "No SSD storage found. Using: ${hdds[-1]} (last HDD found)" "q"
+        selected_storage="${hdds[-1]}"
+        setStatus "No SSD storage found. Using: $selected_storage (last HDD found)" "q" >&2
     else
-        local first_storage=$(echo "$storages" | head -n1)
-        echo "$first_storage"
-        setStatus "Could not identify storage type. Using: $first_storage" "q"
+        echo "ERROR: No suitable storage found (all storage is excluded or local-only)." >&2
+        return 1
     fi
     
+    echo "$selected_storage"
     return 0
 }
 
