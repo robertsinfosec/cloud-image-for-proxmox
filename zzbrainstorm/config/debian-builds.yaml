@@ -1,23 +1,20 @@
 # Batch builds (YAML)
 # Each entry overrides defaults in config/defaults.yaml
 # Use either `release` (codename) OR `version`.
+# VMID is auto-generated as: {node_digit}{distro_digit}{version}
 
 builds:
-  # Minimal required fields example
-  - vmid: 401300
-    distro: debian
+  - distro: debian
     release: trixie
     version: "13"
     notes: "Debian 13 (Trixie)"
 
-  - vmid: 401200
-    distro: debian
+  - distro: debian
     release: bookworm
     version: "12"
     notes: "Debian 12 (Bookworm)"
 
-  - vmid: 401100
-    distro: debian
+  - distro: debian
     release: bullseye
     version: "11"
     notes: "Debian 11 (Bullseye)"

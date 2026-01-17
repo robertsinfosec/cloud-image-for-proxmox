@@ -1,25 +1,22 @@
 # Batch builds (YAML)
 # Each entry overrides defaults in config/defaults.yaml
 # Alpine does not have LTS releases; use the latest three minor versions.
+# VMID is auto-generated as: {node_digit}{distro_digit}{version}
 
 builds:
   # Alpine cloud images use the full VERSION (e.g., 3.23.0) in the filename
   # but RELEASE (e.g., 3.23) in the path.
-  # Minimal required fields example
-  - vmid: 923000
-    distro: alpine
+  - distro: alpine
     release: "3.23"
     version: "3.23.0"
     notes: "Alpine 3.23 (NoCloud x86_64 BIOS cloud-init)"
 
-  - vmid: 922000
-    distro: alpine
+  - distro: alpine
     release: "3.22"
     version: "3.22.0"
     notes: "Alpine 3.22 (NoCloud x86_64 BIOS cloud-init)"
 
-  - vmid: 921000
-    distro: alpine
+  - distro: alpine
     release: "3.21"
     version: "3.21.0"
     notes: "Alpine 3.21 (NoCloud x86_64 BIOS cloud-init)"

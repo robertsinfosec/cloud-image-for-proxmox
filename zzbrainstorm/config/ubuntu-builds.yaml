@@ -1,22 +1,20 @@
 # Batch builds (YAML)
 # Each entry overrides defaults in config/defaults.yaml
 # Use either `release` (codename) OR `version`.
+# VMID is auto-generated as: {node_digit}{distro_digit}{version}
 
 builds:
   # Minimal required fields example (using release)
-  - vmid: 302404
-    distro: ubuntu
+  - distro: ubuntu
     release: noble
     notes: "Ubuntu 24.04 LTS (Noble Numbat)"
 
   # Minimal required fields example (using version)
-  - vmid: 302204
-    distro: ubuntu
+  - distro: ubuntu
     version: "22.04"
     notes: "Ubuntu 22.04 LTS (Jammy Jellyfish)"
 
-  - vmid: 302004
-    distro: ubuntu
+  - distro: ubuntu
     release: focal
     notes: "Ubuntu 20.04 LTS (Focal Fossa)"
     override:

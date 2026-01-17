@@ -1,22 +1,19 @@
 # Batch builds (YAML)
 # Each entry overrides defaults in config/defaults.yaml
+# VMID is auto-generated as: {node_digit}{distro_digit}{version}
 
 builds:
-  # Minimal required fields example
-  - vmid: 909000
-    distro: oraclelinux
+  - distro: oraclelinux
     release: "9"
     version: "9"
     notes: "Oracle Linux 9 (GenericCloud)"
 
-  - vmid: 908000
-    distro: oraclelinux
+  - distro: oraclelinux
     release: "8"
     version: "8"
     notes: "Oracle Linux 8 (GenericCloud)"
 
-  - vmid: 907000
-    distro: oraclelinux
+  - distro: oraclelinux
     release: "7"
     version: "7"
     notes: "Oracle Linux 7 (GenericCloud)"

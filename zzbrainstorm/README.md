@@ -24,6 +24,53 @@ This folder is a mock-up of a unified entrypoint + per-distro configs + batch bu
 - `--only <distro[:release|version]>` (repeatable filter)
 - `--configroot <path>` (root directory containing `config/` and `distros/`)
 
+## Auto-Generation Features
+
+### VMID Auto-Generation
+
+VMIDs are **automatically generated** using the formula:
+```
+{node_digit}{distro_digit}{version_digits}
+```
+
+**Components:**
+- **Node digit** (1st digit): Extracted from hostname (e.g., `pve3` → `3`, fallback to `0`)
+- **Distro digit** (2nd digit): Assigned per distribution alphabetically:
+  - `0` = AlmaLinux
+  - `1` = Alpine
+  - `2` = CentOS
+  - `3` = Debian
+  - `4` = openSUSE
+  - `5` = Oracle Linux
+  - `6` = Rocky Linux
+  - `7` = Ubuntu
+  - `9` = Unknown/Other
+- **Version digits** (last 4 digits): Version number without dots, padded to 4 digits
+
+**Examples:**
+- `pve3` + Ubuntu 24.04 → `372404`
+- `pve1` + Debian 12 → `131200`
+- `pve2` + AlmaLinux 9 → `209000`
+
+**No manual VMID configuration needed!** The system ensures unique VMIDs across your Proxmox cluster by using the node digit.
+
+### Storage Auto-Selection
+
+Storage is **automatically selected** by default with intelligent fallback:
+
+1. **Prefers last SSD** (identified by name patterns: `ssd`, `nvme`, `flash`)
+2. **Falls back to last HDD** if no SSD is found
+3. **Uses first available storage** if categorization fails
+
+**Why "last" storage?** Template images are typically stored separate from active VMs, which often use the "first" available storage.
+
+**Override:** Specify exact storage in `_defaults.yaml` or per-build `override`:
+```yaml
+storage: SSD-1A  # Use specific storage instead of auto
+```
+
+The script verifies storage exists and shows available options if not found.
+
 ## Files in this mock-up
 
 - `build-proxmox-templates.sh`: entrypoint that reads the folder structure
@@ -35,15 +82,37 @@ This folder is a mock-up of a unified entrypoint + per-distro configs + batch bu
 ## Build file format (minimal)
 
 Each entry must include:
-- `vmid`
-- `distro`
-- `release` (codename or version)
-- `version` (numeric version string; used for naming)
+- `distro` (distribution name)
+- `release` (codename) OR `version` (numeric version)
+
+**Auto-generated:**
+- `vmid` (automatically calculated from node + distro + version)
+- `storage` (automatically selected, or specify in `override.storage`)
 
 Optional:
-- `override.storage` (defaults to `defaults.storage`)
-- `notes`
-- `override` (same structure as defaults)
+- `notes` (display name, looked up from catalog if available)
+- `override` (same structure as defaults, can override storage and other settings)
+
+**Example minimal build:**
+```yaml
+builds:
+  - distro: ubuntu
+    release: noble
+  
+  - distro: debian
+    version: "12"
+    override:
+      storage: HDD-1C  # Override auto-selection
+```
+
+## Catalog Integration
+
+The script automatically looks up release information from `catalog/*-catalog.yaml` files:
+- If you specify `version: "22.04"`, it finds `release: "jammy"` from the catalog
+- If you specify `release: "noble"`, it finds `version: "24.04"` from the catalog
+- Display information (`notes`) is pulled from the catalog for better output
+
+This ensures correct download URLs and better user experience without duplicating data.
 
 ## Password file format
 
@@ -53,7 +122,10 @@ file as the password and enforces secure file permissions.
 
 ## Dependencies
 
-- `yq` (YAML parsing)
+- `yq` (YAML parsing) - auto-installs if missing
 - `wget`
 - `virt-customize` (libguestfs-tools)
+- `dhcpcd-base` (required for libguestfs networking)
 - Proxmox tools: `qm`, `pvesm`
+
+The script checks all prerequisites on startup and prompts to install missing packages.

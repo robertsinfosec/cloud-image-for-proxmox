@@ -1,16 +1,14 @@
 # Batch builds (YAML)
 # Each entry overrides defaults in config/defaults.yaml
+# VMID is auto-generated as: {node_digit}{distro_digit}{version}
 
 builds:
-  # Minimal required fields example
-  - vmid: 509000
-    distro: almalinux
+  - distro: almalinux
     release: "9"
     version: "9"
     notes: "AlmaLinux 9 (GenericCloud)"
 
-  - vmid: 508000
-    distro: almalinux
+  - distro: almalinux
     release: "8"
     version: "8"
     notes: "AlmaLinux 8 (GenericCloud)"

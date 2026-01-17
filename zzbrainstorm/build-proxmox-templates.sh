@@ -31,6 +31,14 @@ DEFAULTS_FILE=""
 
 ONLY_FILTERS=()
 
+# Auto-detect node digit from hostname (e.g., pve3 -> 3)
+HOSTNAME=$(hostname -s)
+if [[ $HOSTNAME =~ ([0-9])$ ]]; then
+    NODE_DIGIT="${BASH_REMATCH[1]}"
+else
+    NODE_DIGIT="0"
+fi
+
 usage() {
     echo "Usage: $0 [--only <distro[:release]>] [--only <distro[:release]>] [--configroot <path>]"
     echo "  --only       Filter builds (repeatable), e.g. --only debian or --only debian:trixie"
@@ -281,6 +289,80 @@ ensure_password_file_secure() {
     fi
 }
 
+get_distro_digit() {
+    case "$1" in
+        almalinux)   echo "0" ;;
+        alpine)      echo "1" ;;
+        centos)      echo "2" ;;
+        debian)      echo "3" ;;
+        opensuse)    echo "4" ;;
+        oraclelinux) echo "5" ;;
+        rockylinux)  echo "6" ;;
+        ubuntu)      echo "7" ;;
+        *)           echo "9" ;;
+    esac
+}
+
+generate_vmid() {
+    local distro="$1"
+    local version="$2"
+    
+    local distro_digit=$(get_distro_digit "$distro")
+    local version_digits=$(echo "$version" | tr -d '.' | head -c 4)
+    version_digits=$(printf "%04d" "$version_digits" 2>/dev/null || echo "0000")
+    
+    echo "${NODE_DIGIT}${distro_digit}${version_digits}"
+}
+
+auto_select_storage() {
+    local storages
+    
+    storages=$(pvesm status --enabled 1 2>/dev/null | awk 'NR>1 {print $1}')
+    
+    if [[ -z "$storages" ]]; then
+        echo "ERROR: No storage found on this node." >&2
+        return 1
+    fi
+    
+    local ssds=()
+    local hdds=()
+    
+    while IFS= read -r storage; do
+        if [[ "$storage" =~ (ssd|nvme|flash) ]]; then
+            ssds+=("$storage")
+        else
+            hdds+=("$storage")
+        fi
+    done <<< "$storages"
+    
+    if [[ ${#ssds[@]} -gt 0 ]]; then
+        echo "${ssds[-1]}"
+        setStatus "Auto-selected storage: ${ssds[-1]} (last SSD found)" "*"
+    elif [[ ${#hdds[@]} -gt 0 ]]; then
+        echo "${hdds[-1]}"
+        setStatus "No SSD storage found. Using: ${hdds[-1]} (last HDD found)" "q"
+    else
+        local first_storage=$(echo "$storages" | head -n1)
+        echo "$first_storage"
+        setStatus "Could not identify storage type. Using: $first_storage" "q"
+    fi
+    
+    return 0
+}
+
+verify_storage() {
+    local storage="$1"
+    
+    if ! pvesm status --storage "$storage" &>/dev/null; then
+        echo "ERROR: Storage '$storage' not found or not available on this node." >&2
+        echo "Available storage:" >&2
+        pvesm status --enabled 1 2>/dev/null | awk 'NR>1 {print "  - " $1}' >&2
+        return 1
+    fi
+    
+    return 0
+}
+
 get_hash_command() {
     local hash_path=$1
     local hash_type=${2:-""}
@@ -475,14 +557,34 @@ collect_build_meta() {
         BUILD_RELEASE="$BUILD_VERSION"
     fi
 
-    if [[ -z "$BUILD_DISTRO" || -z "$BUILD_VMID" ]]; then
-        echo "ERROR: Missing required build fields in $build_file (index $build_index)."
+    if [[ -z "$BUILD_DISTRO" ]]; then
+        echo "ERROR: Missing required 'distro' field in $build_file (index $build_index)."
         return 1
     fi
 
+    # Auto-generate VMID if not provided
+    if [[ -z "$BUILD_VMID" || "$BUILD_VMID" == "null" ]]; then
+        BUILD_VMID=$(generate_vmid "$BUILD_DISTRO" "$BUILD_VERSION")
+    fi
+
+    # Get storage (supports "auto" or specific name)
     BUILD_STORAGE=$(resolve_value "$build_file" "$build_index" "storage" "$DEFAULT_STORAGE")
     if [[ -z "$BUILD_STORAGE" || "$BUILD_STORAGE" == "null" ]]; then
         echo "ERROR: Storage not set. Configure defaults.storage or override.storage."
+        return 1
+    fi
+    
+    # Handle auto storage selection
+    if [[ "$BUILD_STORAGE" == "auto" ]]; then
+        BUILD_STORAGE=$(auto_select_storage)
+        if [[ $? -ne 0 ]]; then
+            echo "ERROR: Failed to auto-select storage."
+            return 1
+        fi
+    fi
+    
+    # Verify storage exists
+    if ! verify_storage "$BUILD_STORAGE"; then
         return 1
     fi
 

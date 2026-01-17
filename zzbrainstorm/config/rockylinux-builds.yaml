@@ -1,16 +1,14 @@
 # Batch builds (YAML)
 # Each entry overrides defaults in config/defaults.yaml
+# VMID is auto-generated as: {node_digit}{distro_digit}{version}
 
 builds:
-  # Minimal required fields example
-  - vmid: 709000
-    distro: rockylinux
+  - distro: rockylinux
     release: "9"
     version: "9"
     notes: "Rocky Linux 9 (GenericCloud)"
 
-  - vmid: 708000
-    distro: rockylinux
+  - distro: rockylinux
     release: "8"
     version: "8"
     notes: "Rocky Linux 8 (GenericCloud)"
