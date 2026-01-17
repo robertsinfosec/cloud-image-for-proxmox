@@ -1306,22 +1306,18 @@ for build_file in "${BUILD_FILES[@]}"; do
         if [[ -z "${SHA256SUMS_PATH:-}" ]]; then
             setStatus "WARNING: No SHA checksum available for ${distro}" "w"
             setStatus "Downloaded image will NOT be validated - use with caution!" "w"
+            setStatus "Always re-downloading (cache skipped without checksum verification)" "w"
             HASHES_MATCH=1  # Skip validation loop
             BUILD_STEPS+=("checksum_validation:skipped")
             
-            # Download image if not cached
-            if [[ ! -f "$IMAGE_ORIG" ]]; then
-                setStatus "Downloading image: $IMAGE_URL" "*"
-                if ! wget --progress=bar:force "$IMAGE_URL" -O "$IMAGE_ORIG"; then
-                    setStatus "Image download failed. Skipping this build." "f"
-                    BUILD_STEPS+=("image_download:failed")
-                    BUILD_FAILED=1
-                else
-                    BUILD_STEPS+=("image_download:success")
-                fi
+            # Always download when no checksum is available (can't verify cached copy)
+            setStatus "Downloading image: $IMAGE_URL" "*"
+            if ! wget --progress=bar:force "$IMAGE_URL" -O "$IMAGE_ORIG"; then
+                setStatus "Image download failed. Skipping this build." "f"
+                BUILD_STEPS+=("image_download:failed")
+                BUILD_FAILED=1
             else
-                setStatus "Using cached image: $IMAGE_ORIG" "*"
-                BUILD_STEPS+=("image_download:cached")
+                BUILD_STEPS+=("image_download:success")
             fi
         fi
 

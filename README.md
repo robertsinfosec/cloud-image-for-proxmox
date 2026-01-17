@@ -100,7 +100,7 @@ All templates include:
 > - **Incomplete downloads** - Catches partial/failed downloads before deployment
 > - **Stale images** - Ensures you're using the latest version (same filename may have updates)
 >
-> Some distributions (e.g., [Oracle Linux](https://yum.oracle.com/oracle-linux-templates.html)) don't provide programmatic checksums. The script prominently warns you during validation and build when checksums aren't available, so you can take extra care with those builds.
+> Some distributions (e.g., [Oracle Linux](https://yum.oracle.com/oracle-linux-templates.html)) don't provide programmatic checksums. The script prominently warns you during validation and build when checksums aren't available. **For safety, the cache is always skipped for these distributions** - images are re-downloaded on every build to minimize the risk of using corrupted or incomplete files.
 
 ### Supported Distributions
 
