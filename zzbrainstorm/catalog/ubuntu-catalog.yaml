@@ -1,6 +1,6 @@
-# Catalog of known Ubuntu releases (examples)
-# Reference list of what can be built (naming/download handled in distros/).
-# Use either `release` (codename) or `version` when selecting.
+# Catalog of known Ubuntu releases
+# Reference list of available builds - copy entries to *-builds.yaml files.
+# Both `version` and `release` fields are REQUIRED when building.
 
 catalog:
   - distro: ubuntu

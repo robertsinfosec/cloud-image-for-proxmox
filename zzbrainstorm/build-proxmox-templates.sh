@@ -32,6 +32,7 @@ DEFAULTS_FILE=""
 ONLY_FILTERS=()
 CLEAN_CACHE=false
 CLEAN_TEMPLATES=false
+VALIDATE=false
 
 # Auto-detect node digit from hostname (e.g., pve3 -> 3)
 HOSTNAME=$(hostname -s)
@@ -49,6 +50,7 @@ usage() {
     echo "  --configroot <path>        Root directory containing config/, distros/ (default: script directory)"
     echo "  --clean-cache              Remove all cached images and checksums"
     echo "  --clean-templates          Remove VM templates (use with --only to filter which ones)"
+    echo "  --validate                 Validate configuration files without building"
     echo "  -h, --help                 Show this help message"
 }
 
@@ -589,49 +591,15 @@ collect_build_meta() {
     BUILD_VERSION=$(yq_read ".builds[$build_index].version" "$build_file")
     BUILD_VMID=$(yq_read ".builds[$build_index].vmid" "$build_file")
 
+    # Both version and release are now required
     if [[ -z "$BUILD_VERSION" || "$BUILD_VERSION" == "null" ]]; then
-        BUILD_VERSION=""
-    fi
-
-    if [[ -z "$BUILD_RELEASE" || "$BUILD_RELEASE" == "null" ]]; then
-        BUILD_RELEASE=""
-    fi
-
-    if [[ -z "$BUILD_VERSION" && -z "$BUILD_RELEASE" ]]; then
-        echo "ERROR: Missing release and version in $build_file (index $build_index)."
+        echo "ERROR: Missing required 'version' field in $build_file (index $build_index)."
         return 1
     fi
 
-    # Look up missing fields from catalog
-    if [[ -n "$BUILD_DISTRO" ]]; then
-        if [[ -z "$BUILD_VERSION" && -n "$BUILD_RELEASE" ]]; then
-            # Have release, need version
-            local catalog_version
-            catalog_version=$(lookup_in_catalog "$BUILD_DISTRO" "$BUILD_RELEASE" "" "version")
-            if [[ -n "$catalog_version" ]]; then
-                BUILD_VERSION="$catalog_version"
-            else
-                BUILD_VERSION="$BUILD_RELEASE"
-            fi
-        elif [[ -z "$BUILD_RELEASE" && -n "$BUILD_VERSION" ]]; then
-            # Have version, need release
-            local catalog_release
-            catalog_release=$(lookup_in_catalog "$BUILD_DISTRO" "" "$BUILD_VERSION" "release")
-            if [[ -n "$catalog_release" ]]; then
-                BUILD_RELEASE="$catalog_release"
-            else
-                BUILD_RELEASE="$BUILD_VERSION"
-            fi
-        fi
-    fi
-
-    # Final fallback if catalog lookup didn't help
-    if [[ -z "$BUILD_VERSION" ]]; then
-        BUILD_VERSION="$BUILD_RELEASE"
-    fi
-
-    if [[ -z "$BUILD_RELEASE" ]]; then
-        BUILD_RELEASE="$BUILD_VERSION"
+    if [[ -z "$BUILD_RELEASE" || "$BUILD_RELEASE" == "null" ]]; then
+        echo "ERROR: Missing required 'release' field in $build_file (index $build_index)."
+        return 1
     fi
 
     if [[ -z "$BUILD_DISTRO" ]]; then
@@ -708,6 +676,9 @@ while [[ $# -gt 0 ]]; do
         --clean-templates)
             CLEAN_TEMPLATES=true
             ;;
+        --validate)
+            VALIDATE=true
+            ;;
         -h|--help)
             usage
             exit 0
@@ -783,30 +754,17 @@ if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
             # For cleanup, we only need distro/version/release to calculate VMID
             # No need to resolve storage since qm destroy works regardless of storage location
             distro=$(basename "$build_file" | sed 's/-builds\.yaml$//')
-            
-            # Try to get version first, then release (user might specify either)
             version=$(yq_read ".builds[$i].version" "$build_file" || echo "")
             release=$(yq_read ".builds[$i].release" "$build_file" || echo "")
             
-            # If version is null/empty, try to look it up from catalog using release
+            # Both version and release are now required in builds files
             if [[ -z "$version" || "$version" == "null" ]]; then
-                if [[ -n "$release" && "$release" != "null" ]]; then
-                    # Look up version from catalog (CATALOG_DIR not set yet, use SCRIPT_DIR)
-                    catalog_file="$SCRIPT_DIR/catalog/${distro}-catalog.yaml"
-                    if [[ -f "$catalog_file" ]]; then
-                        version=$(yq_read ".releases[] | select(.release == \"$release\") | .version" "$catalog_file" || echo "")
-                    fi
-                fi
-            fi
-            
-            # If still no version, skip this build
-            if [[ -z "$version" || "$version" == "null" ]]; then
+                echo "WARNING: Build entry $i in $build_file missing version field - skipping"
                 continue
             fi
-            
-            # If release is null/empty, use version
             if [[ -z "$release" || "$release" == "null" ]]; then
-                release="$version"
+                echo "WARNING: Build entry $i in $build_file missing release field - skipping"
+                continue
             fi
             
             # Calculate VMID using the same logic as build phase
@@ -863,6 +821,142 @@ if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
     
     setStatus "Template cleanup complete" "s"
     exit 0
+fi
+
+if [[ "$VALIDATE" == "true" ]]; then
+    setStatus "Validating configuration files" "*"
+    
+    VALIDATION_ERRORS=0
+    VALIDATION_WARNINGS=0
+    
+    # Check catalog directory
+    CATALOG_DIR="$SCRIPT_DIR/catalog"
+    if [[ ! -d "$CATALOG_DIR" ]]; then
+        echo "ERROR: Catalog directory not found: $CATALOG_DIR"
+        VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
+    fi
+    
+    # Load build files
+    BUILD_FILES=()
+    while IFS= read -r -d '' file; do
+        BUILD_FILES+=("$file")
+    done < <(find "$CONFIG_DIR" -maxdepth 1 -type f -name "*-builds.yaml" ! -name "*.disabled" -print0 | sort -z)
+    
+    if [[ ${#BUILD_FILES[@]} -eq 0 ]]; then
+        echo "ERROR: No build files found in $CONFIG_DIR"
+        VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
+        exit 1
+    fi
+    
+    echo "Found ${#BUILD_FILES[@]} build file(s) to validate"
+    echo ""
+    
+    VMID_MAP=()
+    
+    for build_file in "${BUILD_FILES[@]}"; do
+        echo "Validating: $(basename "$build_file")"
+        
+        # Check YAML syntax
+        if ! yq_read ".builds" "$build_file" >/dev/null 2>&1; then
+            echo "  ✗ YAML syntax error"
+            VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
+            continue
+        fi
+        
+        build_count=$(yq_read ".builds | length" "$build_file" 2>/dev/null || echo "0")
+        if [[ "$build_count" == "null" || "$build_count" == "0" || ! "$build_count" =~ ^[0-9]+$ ]]; then
+            echo "  ⚠ No builds defined"
+            VALIDATION_WARNINGS=$((VALIDATION_WARNINGS + 1))
+            continue
+        fi
+        
+        echo "  Found $build_count build(s)"
+        
+        for ((i=0; i<build_count; i++)); do
+            distro=$(yq_read ".builds[$i].distro" "$build_file" 2>/dev/null || echo "")
+            version=$(yq_read ".builds[$i].version" "$build_file" 2>/dev/null || echo "")
+            release=$(yq_read ".builds[$i].release" "$build_file" 2>/dev/null || echo "")
+            
+            BUILD_LABEL="Build #$((i+1))"
+            if [[ -n "$version" && "$version" != "null" ]]; then
+                BUILD_LABEL="$BUILD_LABEL ($version)"
+            elif [[ -n "$release" && "$release" != "null" ]]; then
+                BUILD_LABEL="$BUILD_LABEL ($release)"
+            fi
+            
+            # Check required fields
+            if [[ -z "$distro" || "$distro" == "null" ]]; then
+                echo "    ✗ $BUILD_LABEL: Missing 'distro' field"
+                VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
+                continue
+            fi
+            
+            if [[ -z "$version" || "$version" == "null" ]]; then
+                echo "    ✗ $BUILD_LABEL: Missing 'version' field"
+                VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
+                continue
+            fi
+            
+            if [[ -z "$release" || "$release" == "null" ]]; then
+                echo "    ✗ $BUILD_LABEL: Missing 'release' field"
+                VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
+                continue
+            fi
+            
+            # Check distro config exists
+            if [[ ! -f "$DISTROS_DIR/${distro}-config.sh" ]]; then
+                echo "    ✗ $BUILD_LABEL: Distro config not found: ${distro}-config.sh"
+                VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
+                continue
+            fi
+            
+            # Check catalog file exists
+            if [[ ! -f "$CATALOG_DIR/${distro}-catalog.yaml" ]]; then
+                echo "    ⚠ $BUILD_LABEL: Catalog file not found: ${distro}-catalog.yaml"
+                VALIDATION_WARNINGS=$((VALIDATION_WARNINGS + 1))
+            fi
+            
+            # Calculate VMID and check for duplicates
+            vmid=$(generate_vmid "$distro" "$version" 2>/dev/null || echo "")
+            if [[ -n "$vmid" ]]; then
+                # Check for VMID collision
+                for entry in "${VMID_MAP[@]}"; do
+                    IFS='|' read -r existing_vmid existing_build <<< "$entry"
+                    if [[ "$existing_vmid" == "$vmid" ]]; then
+                        echo "    ✗ $BUILD_LABEL: VMID collision! $vmid already used by $existing_build"
+                        VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
+                    fi
+                done
+                VMID_MAP+=("${vmid}|$(basename "$build_file"):#$((i+1))")
+                echo "    ✓ $BUILD_LABEL: $distro $version ($release) - VMID $vmid"
+            else
+                echo "    ✗ $BUILD_LABEL: Failed to generate VMID"
+                VALIDATION_ERRORS=$((VALIDATION_ERRORS + 1))
+            fi
+        done
+        echo ""
+    done
+    
+    echo "======================================================================"
+    echo "V A L I D A T I O N  S U M M A R Y"
+    echo "======================================================================"
+    echo "Build files validated: ${#BUILD_FILES[@]}"
+    echo "Total builds found: ${#VMID_MAP[@]}"
+    
+    if [[ $VALIDATION_WARNINGS -gt 0 ]]; then
+        echo -e "\e[33mWarnings: $VALIDATION_WARNINGS\e[0m"
+    fi
+    
+    if [[ $VALIDATION_ERRORS -gt 0 ]]; then
+        echo -e "\e[31mErrors: $VALIDATION_ERRORS\e[0m"
+        echo "======================================================================"
+        exit 1
+    else
+        echo -e "\e[32mErrors: 0\e[0m"
+        echo "======================================================================"
+        setStatus "Validation passed successfully" "s"
+        exit 0
+    fi
 fi
 
 setStatus "Checking runtime prerequisites" "*"
@@ -1200,6 +1294,17 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         # Skip VM creation if build already failed during download/customization phase
         if [[ $BUILD_FAILED -eq 1 ]]; then
+            # Record the failure before continuing
+            FAILURE_REASON="Build incomplete"
+            for step in "${BUILD_STEPS[@]}"; do
+                if [[ "$step" == *":failed" ]]; then
+                    step_name=$(echo "$step" | cut -d: -f1 | tr '_' ' ')
+                    FAILURE_REASON="${step_name} failed"
+                    break
+                fi
+            done
+            BUILD_RESULTS+=("${BUILD_KEY}|failure")
+            BUILD_ERRORS+=("${BUILD_KEY}|${FAILURE_REASON}")
             cleanup_build_files
             continue
         fi
@@ -1482,13 +1587,13 @@ echo "======================================================================"
 echo "F I N A L  B U I L D  S U M M A R Y"
 echo "======================================================================"
 
+SUCCESS_COUNT=0
+WARNING_COUNT=0
+FAILURE_COUNT=0
+
 if [[ ${#BUILD_RESULTS[@]} -eq 0 ]]; then
     setStatus "No builds were executed." "f"
 else
-    SUCCESS_COUNT=0
-    WARNING_COUNT=0
-    FAILURE_COUNT=0
-
     for result in "${BUILD_RESULTS[@]}"; do
         IFS='|' read -r build_name status <<< "$result"
         if [[ "$status" == "success" ]]; then
