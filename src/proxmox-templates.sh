@@ -33,6 +33,7 @@ ONLY_FILTERS=()
 CLEAN_CACHE=false
 REMOVE_TEMPLATES=false
 VALIDATE=false
+STATUS=false
 BUILD=false
 FORCE=false
 
@@ -57,6 +58,7 @@ usage() {
     echo "  --remove                   Remove VM templates (use with --only to filter which ones)"
     echo "  --force                    Skip confirmation prompts (use with --remove)"
     echo "  --validate                 Validate configuration files without building"
+    echo "  --status                   Show drift between configured templates and Proxmox"
     echo "  -h, --help                 Show this help message"
     echo ""
     echo "Primary Features:"
@@ -69,6 +71,7 @@ usage() {
     echo "  $0 --build --only ubuntu   # Build only Ubuntu templates"
     echo "  $0 --remove --only ubuntu --force  # Remove Ubuntu templates without confirmation"
     echo "  $0 --validate              # Validate configuration without building"
+    echo "  $0 --status                # Show template drift detection"
     echo "  $0 --clean-cache           # Clean cached images"
 }
 
@@ -755,6 +758,9 @@ while [[ $# -gt 0 ]]; do
         --validate)
             VALIDATE=true
             ;;
+        --status)
+            STATUS=true
+            ;;
         -h|--help)
             usage
             exit 0
@@ -769,7 +775,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Check if any action flag is specified
-if [[ "$BUILD" != "true" && "$CLEAN_CACHE" != "true" && "$REMOVE_TEMPLATES" != "true" && "$VALIDATE" != "true" ]]; then
+if [[ "$BUILD" != "true" && "$CLEAN_CACHE" != "true" && "$REMOVE_TEMPLATES" != "true" && "$VALIDATE" != "true" && "$STATUS" != "true" ]]; then
     usage
     exit 0
 fi
@@ -1065,6 +1071,154 @@ if [[ "$VALIDATE" == "true" ]]; then
         setStatus "Validation passed successfully" "s"
         exit 0
     fi
+fi
+
+if [[ "$STATUS" == "true" ]]; then
+    setStatus "Checking prerequisites for status check" "*"
+    check_yq
+    setStatus "Gathering template status information" "*"
+    
+    # Load build files
+    BUILD_FILES=()
+    while IFS= read -r -d '' file; do
+        BUILD_FILES+=("$file")
+    done < <(find "$CONFIG_DIR" -maxdepth 1 -type f -name "*-builds.yaml" ! -name "*.disabled" -print0 | sort -z)
+    
+    if [[ ${#BUILD_FILES[@]} -eq 0 ]]; then
+        echo "ERROR: No build files found in $CONFIG_DIR"
+        exit 1
+    fi
+    
+    # Collect all configured templates
+    CONFIGURED_TEMPLATES=()
+    for build_file in "${BUILD_FILES[@]}"; do
+        build_count=$(yq_read ".builds | length" "$build_file")
+        if [[ "$build_count" == "null" || "$build_count" == "0" || ! "$build_count" =~ ^[0-9]+$ ]]; then
+            continue
+        fi
+        
+        for ((i=0; i<build_count; i++)); do
+            if ! collect_build_meta "$build_file" "$i"; then
+                continue
+            fi
+            
+            distro="$BUILD_DISTRO"
+            version="$BUILD_VERSION"
+            release="$BUILD_RELEASE"
+            vmid="$BUILD_VMID"
+            
+            # Apply filters if specified
+            if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+                matched=false
+                for filter in "${ONLY_FILTERS[@]}"; do
+                    if matches_filter "$distro" "$release" "$version" "$filter"; then
+                        matched=true
+                        break
+                    fi
+                done
+                if [[ "$matched" != "true" ]]; then
+                    continue
+                fi
+            fi
+            
+            CONFIGURED_TEMPLATES+=("${vmid}|${distro}|${version}|${release}|${distro}-${version}-${release}")
+        done
+    done
+    
+    # Get all VMs from Proxmox (focusing on templates)
+    PROXMOX_VMS=()
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        PROXMOX_VMS+=("$line")
+    done < <(qm list 2>/dev/null | tail -n +2 | awk '{print $1"|"$2"|"$3}' || true)
+    
+    # Build lookup maps
+    declare -A CONFIGURED_MAP
+    declare -A PROXMOX_MAP
+    
+    for entry in "${CONFIGURED_TEMPLATES[@]}"; do
+        IFS='|' read -r vmid distro version release key <<< "$entry"
+        CONFIGURED_MAP["$vmid"]="${distro}|${version}|${release}"
+    done
+    
+    for entry in "${PROXMOX_VMS[@]}"; do
+        IFS='|' read -r vmid name status <<< "$entry"
+        PROXMOX_MAP["$vmid"]="${name}|${status}"
+    done
+    
+    # Display results
+    echo ""
+    echo -e "${LightCyan}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${LightCyan}║${NC} ${LightGreen}Template Status - Drift Detection${NC}"
+    echo -e "${LightCyan}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    MISSING_COUNT=0
+    PRESENT_COUNT=0
+    EXTRA_COUNT=0
+    
+    # Check configured templates
+    echo -e "${White}Configured Templates:${NC}"
+    for entry in "${CONFIGURED_TEMPLATES[@]}"; do
+        IFS='|' read -r vmid distro version release key <<< "$entry"
+        expected_name="${distro}-${version}"
+        if [[ -n "$release" && "$release" != "$version" ]]; then
+            expected_name="${expected_name}-${release}"
+        fi
+        
+        if [[ -n "${PROXMOX_MAP[$vmid]:-}" ]]; then
+            IFS='|' read -r actual_name status <<< "${PROXMOX_MAP[$vmid]}"
+            if [[ "$status" == "running" ]]; then
+                echo -e "  ${Yellow}⚠${NC} VMID ${vmid}: ${distro} ${version} (${release}) - ${Yellow}RUNNING (should be stopped template)${NC}"
+            elif [[ "$actual_name" != "$expected_name" ]]; then
+                echo -e "  ${Yellow}⚠${NC} VMID ${vmid}: ${distro} ${version} (${release}) - ${Yellow}NAME MISMATCH${NC}"
+                echo -e "      Expected: ${expected_name}"
+                echo -e "      Actual:   ${actual_name}"
+            else
+                echo -e "  ${Green}✓${NC} VMID ${vmid}: ${distro} ${version} (${release})"
+                PRESENT_COUNT=$((PRESENT_COUNT + 1))
+            fi
+        else
+            echo -e "  ${Red}✗${NC} VMID ${vmid}: ${distro} ${version} (${release}) - ${Red}MISSING${NC}"
+            MISSING_COUNT=$((MISSING_COUNT + 1))
+        fi
+    done
+    
+    # Check for extra VMs in Proxmox that aren't configured
+    echo ""
+    echo -e "${White}Extra VMs in Proxmox (not in config):${NC}"
+    FOUND_EXTRA=false
+    for vmid in "${!PROXMOX_MAP[@]}"; do
+        if [[ -z "${CONFIGURED_MAP[$vmid]:-}" ]]; then
+            IFS='|' read -r name status <<< "${PROXMOX_MAP[$vmid]}"
+            echo -e "  ${Yellow}⚠${NC} VMID ${vmid}: ${name} (${status})"
+            EXTRA_COUNT=$((EXTRA_COUNT + 1))
+            FOUND_EXTRA=true
+        fi
+    done
+    
+    if [[ "$FOUND_EXTRA" != "true" ]]; then
+        echo -e "  ${Green}None${NC}"
+    fi
+    
+    # Summary
+    echo ""
+    echo -e "${LightCyan}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${LightCyan}║${NC} ${White}Summary${NC}"
+    echo -e "${LightCyan}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "  Configured templates: ${#CONFIGURED_TEMPLATES[@]}"
+    echo -e "  ${Green}Present:${NC} ${PRESENT_COUNT}"
+    echo -e "  ${Red}Missing:${NC} ${MISSING_COUNT}"
+    echo -e "  ${Yellow}Extra:${NC}   ${EXTRA_COUNT}"
+    echo ""
+    
+    if [[ $MISSING_COUNT -eq 0 && $EXTRA_COUNT -eq 0 ]]; then
+        setStatus "No drift detected - all templates in sync" "s"
+    else
+        setStatus "Drift detected - $MISSING_COUNT missing, $EXTRA_COUNT extra" "w"
+    fi
+    
+    exit 0
 fi
 
 # Only proceed with build if --build flag was specified
