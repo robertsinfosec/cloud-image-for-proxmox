@@ -85,11 +85,12 @@ require_root() {
 
 cleanup_build_files() {
     # Cleanup function for temp files created during build
-    # Safe to call even if files don't exist
-    rm -f "$TEMP_KEYS" 2>/dev/null || true
-    rm -f "$WORK_IMAGE" 2>/dev/null || true
+    # Safe to call even if files don't exist or variables aren't set yet
+    [[ -n "${TEMP_KEYS:-}" ]] && rm -f "$TEMP_KEYS" 2>/dev/null || true
+    [[ -n "${WORK_IMAGE:-}" ]] && rm -f "$WORK_IMAGE" 2>/dev/null || true
     if [[ "${CACHE_KEEP:-false}" != "true" ]]; then
-        rm -f "$IMAGE_ORIG" "$HASH_FILE" 2>/dev/null || true
+        [[ -n "${IMAGE_ORIG:-}" ]] && rm -f "$IMAGE_ORIG" 2>/dev/null || true
+        [[ -n "${HASH_FILE:-}" ]] && rm -f "$HASH_FILE" 2>/dev/null || true
     fi
 }
 
@@ -779,14 +780,26 @@ if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
         fi
         
         for ((i=0; i<build_count; i++)); do
-            if ! collect_build_meta "$build_file" "$i"; then
+            # For cleanup, we only need distro/version/release to calculate VMID
+            # No need to resolve storage since qm destroy works regardless of storage location
+            distro=$(basename "$build_file" | sed 's/-builds\.yaml$//')
+            version=$(yq_read ".builds[$i].version" "$build_file")
+            release=$(yq_read ".builds[$i].release" "$build_file")
+            
+            if [[ -z "$version" || "$version" == "null" ]]; then
                 continue
             fi
+            if [[ -z "$release" || "$release" == "null" ]]; then
+                release="$version"
+            fi
+            
+            # Calculate VMID using the same logic as build phase
+            vmid=$(generate_vmid "$distro" "$version")
             
             if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
                 matched=false
                 for filter in "${ONLY_FILTERS[@]}"; do
-                    if matches_filter "$BUILD_DISTRO" "$BUILD_RELEASE" "$BUILD_VERSION" "$filter"; then
+                    if matches_filter "$distro" "$release" "$version" "$filter"; then
                         matched=true
                         break
                     fi
@@ -796,7 +809,7 @@ if [[ "$CLEAN_TEMPLATES" == "true" ]]; then
                 fi
             fi
             
-            TEMPLATES_TO_REMOVE+=("${BUILD_VMID}|${BUILD_DISTRO}|${BUILD_VERSION}|${BUILD_RELEASE}")
+            TEMPLATES_TO_REMOVE+=("${vmid}|${distro}|${version}|${release}")
         done
     done
     
