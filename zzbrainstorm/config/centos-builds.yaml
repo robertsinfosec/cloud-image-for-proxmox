@@ -1,14 +1,10 @@
 # Batch builds (YAML)
 # Each entry overrides defaults in config/defaults.yaml
 # VMID is auto-generated as: {node_digit}{distro_digit}{version}
+# Note: CentOS 8/Stream 8 reached EOL on May 31, 2024 and is excluded
 
 builds:
   - distro: centos
     release: "9"
     version: "9"
     notes: "CentOS Stream 9 (GenericCloud)"
-
-  - distro: centos
-    release: "8"
-    version: "8"
-    notes: "CentOS Stream 8 (GenericCloud)"
