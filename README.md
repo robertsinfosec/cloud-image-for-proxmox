@@ -44,7 +44,7 @@ On a **brand new Proxmox installation**, run these two commands:
 ```bash
 cd src
 
-# Configure all available storage (automatically discovers and provisions disks)
+# Provision all new/unused storage (safe to run repeatedly)
 ./proxmox-storage.sh --provision --force
 
 # Download and install ALL current cloud-init templates
@@ -56,6 +56,9 @@ cd src
 - Cloud-init templates for current + 2 previous versions of major Linux distributions
 - Templates ready to clone for instant VM deployment
 
+> [!TIP]
+> The `--provision` command only provisions new/unused devices and is **safe to run repeatedly**. Add a new disk to your server and just run it again - existing storage won't be touched.
+
 ---
 
 ## 🎯 Features
@@ -63,7 +66,8 @@ cd src
 ### Storage Management (`proxmox-storage.sh`)
 - ✅ **Auto-Discovery** - Finds all available non-system disks
 - ✅ **Intelligent Naming** - `SSD-1A`, `HDD-2C` format (position-based, deterministic)
-- ✅ **Safe Defaults** - Won't touch system disks or existing Proxmox storage
+- ✅ **Safe Defaults** - Only provisions new/unused devices; won't destroy existing storage
+- ✅ **Repeatable** - Run it again when you add new disks without risk
 - ✅ **Batch Operations** - Provision entire racks of servers with one command
 
 [**→ Full Storage Documentation**](src/proxmox-storage.md)
@@ -127,16 +131,16 @@ cd src
 # Preview what will be provisioned
 ./proxmox-storage.sh --status
 
-# Provision all available disks (with confirmation)
-./proxmox-storage.sh --provision
-
-# Force provision without confirmation (automation-friendly)
+# Provision only new/unused disks (safe, repeatable)
 ./proxmox-storage.sh --provision --force
 
-# Provision only specific device(s)
+# Destroy and re-provision ALL storage (destructive!)
+./proxmox-storage.sh --provision --all --force
+
+# Provision (or re-provision) specific device
 ./proxmox-storage.sh --provision --only /dev/sdb --force
 
-# Provision only specific storage (by name)
+# Provision (or re-provision) specific storage by name
 ./proxmox-storage.sh --provision --only HDD-2C --force
 ```
 

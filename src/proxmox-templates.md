@@ -1,6 +1,6 @@
-# Brainstorm: Unified Template Builder
+# About `proxmox-templates.sh`
 
-A unified entrypoint for building Proxmox cloud-init VM templates across multiple Linux distributions with intelligent automation and comprehensive build tracking.
+This script allows you to fetch and customize various Cloud Init-ready Linux distribution images and convert them into Proxmox VM templates. It supports multiple distributions with tailored customization steps and provides robust build tracking and validation features.
 
 ## Quick Start
 
@@ -33,6 +33,8 @@ A unified entrypoint for building Proxmox cloud-init VM templates across multipl
 - ✅ **Multi-distro Support** - AlmaLinux, Alpine, CentOS, Debian, openSUSE, Oracle Linux, Rocky Linux, Ubuntu
 
 ## Command-Line Options
+
+Below are the details of the command-line options.
 
 ### Basic Usage
 

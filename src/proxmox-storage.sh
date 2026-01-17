@@ -56,6 +56,7 @@ FORCE=0
 WHATIF=0
 QUICK_FORMAT=1
 EXTENDED=0
+ALL=0
 ONLY_FILTERS=()
 
 log_context() {
@@ -65,20 +66,21 @@ log_context() {
   if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
     filters="${ONLY_FILTERS[*]}"
   fi
-  p_info "Context: node=$node mode=${MODE:-unset} whatif=$WHATIF force=$FORCE full_format=$((1-QUICK_FORMAT)) filters=$filters"
+  p_info "Context: node=$node mode=${MODE:-unset} whatif=$WHATIF force=$FORCE full_format=$((1-QUICK_FORMAT)) all=$ALL filters=$filters"
 }
 
 usage() {
   cat <<'EOF'
 Usage:
-  proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--only <filter>]
+  proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--all] [--only <filter>]
   proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
   proxmox-storage.sh --status [--extended]
   proxmox-storage.sh --help
 
 Options:
-  --provision         Provision non-system disks (destructive)
+  --provision         Provision unused/new disks only (safe default)
   --deprovision       Deprovision non-system storage (destructive)
+  --all               Destroy and re-provision ALL storage (use with --provision)
   --force             Skip confirmation prompt
   --whatif, --simulate
                       Show what would be done without making changes
@@ -88,6 +90,16 @@ Options:
   --only <filter>     Filter to specific device(s) or storage name(s) (repeatable)
                       Examples: --only /dev/sdb  --only HDD-2C  --only SSD-3A
   --help              Show this help
+
+Examples:
+  # Provision only new/unused devices (safe)
+  ./proxmox-storage.sh --provision --force
+
+  # Destroy and re-provision ALL storage (destructive)
+  ./proxmox-storage.sh --provision --all --force
+
+  # Destroy and re-provision specific device
+  ./proxmox-storage.sh --provision --only /dev/sdb --force
 EOF
 }
 
@@ -119,6 +131,9 @@ parse_args() {
         ;;
       --extended)
         EXTENDED=1
+        ;;
+      --all)
+        ALL=1
         ;;
       --only)
         shift
@@ -668,21 +683,26 @@ provision_data_disks() {
     fi
     expected_pattern="^${typ}-${hd}[A-Z]$"
 
-    # If already provisioned in our scheme, heal and continue
+    # If already provisioned in our scheme
     if [[ -n "$existing_label" && "$existing_label" =~ $expected_pattern ]]; then
       label="$existing_label"
-      p_ok "Disk $d already provisioned as $label; healing mount + fstab + Proxmox storage"
-      ensure_mount "$label" "$part"
-      ensure_pvesm_storage "$label" "/mnt/disks/$label"
-      continue
+      # Skip if not using --all or --only (safe default: only provision new devices)
+      if [[ $ALL -eq 0 && ${#ONLY_FILTERS[@]} -eq 0 ]]; then
+        p_ok "Disk $d already provisioned as $label; skipping (use --all or --only to re-provision)"
+        ensure_mount "$label" "$part"
+        ensure_pvesm_storage "$label" "/mnt/disks/$label"
+        continue
+      fi
+      # With --all or --only, destroy and re-provision
+      p_warn "Disk $d already provisioned as $label; will DESTROY and re-provision"
     fi
 
-    # Otherwise: DESTROY + reprovision
+    # DESTROY + (re)provision
     local letter
     letter="$(next_letter "$typ" "$hd")"
     label="${typ}-${hd}${letter}"
 
-    p_warn "Disk $d will be DESTROYED and reprovisioned as $label (GPT, single partition, ext4)"
+    p_warn "Disk $d will be DESTROYED and provisioned as $label (GPT, single partition, ext4)"
 
     # Wipe signatures/partition table
     run_cmd "Wiping filesystem signatures on $d" wipefs -a "$d"

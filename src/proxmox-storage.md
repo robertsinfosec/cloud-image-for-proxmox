@@ -33,10 +33,10 @@ Most users only need the defaults:
 1) See what disks are attached:
 
 ```
-proxmox-storage.sh --show-available
+proxmox-storage.sh --status
 ```
 
-2) Provision all non‑system disks:
+2) Provision all unused/new non‑system disks:
 
 ```
 proxmox-storage.sh --provision --force
@@ -45,8 +45,12 @@ proxmox-storage.sh --provision --force
 That run will:
 - Expand the system disk to use all available space for `/`.
 - Remove the default `local-lvm` thinpool if present.
-- Partition, format, and mount every non‑system disk.
+- Partition, format, and mount every **new/unused** non‑system disk.
 - Add each disk as a Proxmox `dir` storage.
+- **Skip** any already-provisioned disks (non-destructive, safe default).
+
+> [!TIP]
+> The `--provision` command is **safe to run repeatedly**. It only provisions new/unused devices and will not destroy existing provisioned storage. This means you can add a new disk to your server and simply run `./proxmox-storage.sh --provision --force` without worrying about wiping out existing storage.
 
 ### Example: common single‑node layout
 
@@ -67,14 +71,21 @@ After provisioning, you typically end up with:
 
 ## Typical usage (re‑provision an older node)
 
-If the node has old storage you want to reset:
+If the node has old storage you want to completely reset:
 
-```
+```bash
+# Option 1: Deprovision everything, then provision fresh
 proxmox-storage.sh --deprovision --force
 proxmox-storage.sh --provision --force
+
+# Option 2: Destroy and re-provision all storage in one step
+proxmox-storage.sh --provision --all --force
 ```
 
-This makes storage clean and consistent before provisioning again.
+The `--all` flag tells `--provision` to destroy and re-provision **all** storage, including already-provisioned disks. This is useful when you want to start completely fresh.
+
+> [!CAUTION]
+> The `--provision --all` command is **destructive** and will wipe all existing provisioned storage. Use it carefully!
 
 ### Example: cluster‑scale naming consistency
 
@@ -101,14 +112,15 @@ Disk labels and storage IDs follow this pattern:
 
 ```
 Usage:
-  proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--only <filter>]
+  proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--all] [--only <filter>]
   proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
   proxmox-storage.sh --status [--extended]
   proxmox-storage.sh --help
 
 Options:
-  --provision         Provision non-system disks (destructive)
+  --provision         Provision unused/new disks only (safe default)
   --deprovision       Deprovision non-system storage (destructive)
+  --all               Destroy and re-provision ALL storage (use with --provision)
   --force             Skip confirmation prompt
   --whatif, --simulate
                       Show what would be done without making changes
@@ -118,6 +130,16 @@ Options:
   --only <filter>     Filter to specific device(s) or storage name(s) (repeatable)
                       Examples: --only /dev/sdb  --only HDD-2C  --only SSD-3A
   --help              Show this help
+
+Examples:
+  # Provision only new/unused devices (safe)
+  ./proxmox-storage.sh --provision --force
+
+  # Destroy and re-provision ALL storage (destructive)
+  ./proxmox-storage.sh --provision --all --force
+
+  # Destroy and re-provision specific device
+  ./proxmox-storage.sh --provision --only /dev/sdb --force
 ```
 
 ## `--status`
@@ -127,34 +149,123 @@ Prints a concise table of attached disks and their characteristics using SMART d
 > [!TIP]
 > Use this before provisioning to verify which disks are SSDs vs HDDs and to spot external RAID devices.
 
-### Example Output
+### Example Output - Nothing Allocated
 
-Below is the output of one node when running with `--status`:
+Below is the output of one node when running with `--status` where :
 
 ```
-[*] Context: node=pve1 mode=show-available whatif=0 force=0 full_format=0 device=all
+[*] Context: node=pve2 mode=status whatif=0 force=0 full_format=0 filters=all
 [*] Checking root privileges
 [+] Running as root
-[*] Available storage summary
-Device     Size     Model                          Media               
-/dev/sda   476.9G   SPCC Solid State Disk          SSD                 
-/dev/sdb    1.8T    ST2000LX001-1RG174             5400 rpm            
-/dev/sdc    1.8T    ST2000LX001-1RG174             5400 rpm            
-/dev/sdd   13.6T    H/W RAID5                      unknown             
-/dev/sde   476.9G   Timetec 30TT253X2-512G         SSD
+╔════════════════════════════════════════════════════════════════════════════════╗
+║ PHYSICAL STORAGE DEVICES
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+Device     Size     Model                          Media                Proxmox Storage
+/dev/sda    1.8T    ST2000DM008-2FR102             7200 rpm             -              
+/dev/sdb   232.9G   Samsung SSD 860 EVO 250GB      SSD                  (system)       
+/dev/sdc    7.3T    JMicron H/W RAID5              unknown              -              
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║ PROXMOX STORAGE → DEVICE MAPPING
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+  No device allocations found
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║ AVAILABLE FOR PROVISIONING
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+  The following devices are available for Proxmox storage:
+
+    /dev/sda ( 1.8T, ST2000DM008-2FR102)
+    /dev/sdc ( 7.3T, JMicron H/W RAID5)
+
+  To provision them, run:
+
+    # Provision all available devices
+    ./proxmox-storage.sh --provision --force
+
+    # Or provision specific device(s)
+    ./proxmox-storage.sh --provision --only /dev/sda --only /dev/sdc
+
 ```
 
-and just as a reference, here is the output of another node:
+### Example Output - Some Storage Allocated
+Below is the output of one node when running with `--status` where some disks are already provisioned:
 
 ```
 [*] Context: node=pve1 mode=status whatif=0 force=0 full_format=0 filters=all
 [*] Checking root privileges
 [+] Running as root
-[*] Available storage summary
-Device     Size     Model                          Media               
-/dev/sda    1.8T    ST2000DM008-2FR102             7200 rpm            
-/dev/sdb   238.5G   Micron 1100 SATA 256GB         SSD                 
-/dev/sdc    7.3T    JMicron H/W RAID5              unknown
+╔════════════════════════════════════════════════════════════════════════════════╗
+║ PHYSICAL STORAGE DEVICES
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+Device     Size     Model                          Media                Proxmox Storage
+/dev/sda    1.8T    ST2000DM008-2FR102             7200 rpm             -              
+/dev/sdb   238.5G   Micron 1100 SATA 256GB         SSD                  (system)       
+/dev/sdc    7.3T    JMicron H/W RAID5              unknown              HDD-1B         
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║ PROXMOX STORAGE → DEVICE MAPPING
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+  HDD-1B (dir) → /dev/sdc ( 7.3T, JMicron H/W RAID5)
+    Mount: /mnt/disks/HDD-1B
+    Device: /dev/sdc1
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║ AVAILABLE FOR PROVISIONING
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+  /dev/sda is available for Proxmox storage ( 1.8T, ST2000DM008-2FR102)
+
+  To provision it, run:
+
+    ./proxmox-storage.sh --provision --only /dev/sda
+
+```
+
+### Example Output - All Storage Allocated
+
+Below is the output of one node when running with `--status` where all disks are already provisioned:
+
+```
+[*] Context: node=pve2 mode=status whatif=0 force=0 full_format=0 filters=all
+[*] Checking root privileges
+[+] Running as root
+╔════════════════════════════════════════════════════════════════════════════════╗
+║ PHYSICAL STORAGE DEVICES
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+Device     Size     Model                          Media                Proxmox Storage
+/dev/sda   476.9G   OSSD512GBTSS2                  SSD                  (system)       
+/dev/sdb    1.8T    ST2000LX001-1RG174             5400 rpm             HDD-2A         
+/dev/sdc    1.8T    ST2000LX001-1RG174             5400 rpm             HDD-2B         
+/dev/sdd   476.9G   Timetec 30TT253X2-512G         SSD                  SSD-2A         
+/dev/sde   13.6T    H/W RAID5                      unknown              HDD-2C         
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║ PROXMOX STORAGE → DEVICE MAPPING
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+  HDD-2B (dir) → /dev/sdc ( 1.8T, ST2000LX001-1RG174)
+    Mount: /mnt/disks/HDD-2B
+    Device: /dev/sdc1
+
+  HDD-2C (dir) → /dev/sde (13.6T, H/W RAID5)
+    Mount: /mnt/disks/HDD-2C
+    Device: /dev/sde1
+
+  HDD-2A (dir) → /dev/sdb ( 1.8T, ST2000LX001-1RG174)
+    Mount: /mnt/disks/HDD-2A
+    Device: /dev/sdb1
+
+  SSD-2A (dir) → /dev/sdd (476.9G, Timetec 30TT253X2-512G)
+    Mount: /mnt/disks/SSD-2A
+    Device: /dev/sdd1
+
 ```
 
 ### Extended SMART fields
@@ -182,39 +293,59 @@ Device     Size     Model                          Media        Health   Temp   
 
 ## `--provision`
 
-This mode provisions **all non‑system disks** as node‑local Proxmox storage:
+This mode provisions **new/unused non‑system disks** as node‑local Proxmox storage:
 
-- Wipes and partitions each non‑system disk (unless already labeled in the expected scheme)
+- Wipes and partitions each new/unused non‑system disk
 - Formats as ext4 and mounts under `/mnt/disks/<LABEL>`
 - Adds each mount as a Proxmox `dir` storage (node‑local, non‑shared)
 - Reclaims the system disk by removing `local-lvm` and expanding `/`
+- **Skips** already-provisioned disks (safe default)
 
 Typical usage:
 
-```
+```bash
+# Provision only new/unused devices (safe, repeatable)
 proxmox-storage.sh --provision --force
 ```
+
+> [!TIP]
+> This is **safe to run repeatedly**. Add a new disk, run the command, and only the new disk gets provisioned.
+
+### Destroy and re-provision all storage
+
+If you need to completely reset all storage (destructive), use `--all`:
+
+```bash
+# Destroy and re-provision ALL storage (DESTRUCTIVE)
+proxmox-storage.sh --provision --all --force
+```
+
+> [!CAUTION]
+> The `--all` flag makes `--provision` destructive, wiping even already-provisioned disks.
 
 > [!TIP]
 > Use `--whatif` first to preview the plan without making changes.
 
 ### Filter to specific devices or storage
 
-If you need to provision only specific disk(s) without touching others, use `--only` (repeatable):
+If you need to provision only specific disk(s), use `--only` (repeatable):
 
 ```bash
-# Provision a single device
-proxmox-storage.sh --provision --only /dev/sde
+# Provision (or re-provision) a single device
+proxmox-storage.sh --provision --only /dev/sde --force
 
 # Provision multiple devices
-proxmox-storage.sh --provision --only /dev/sdb --only /dev/sdc
+proxmox-storage.sh --provision --only /dev/sdb --only /dev/sdc --force
 
-# Provision by storage name (if already labeled)
-proxmox-storage.sh --provision --only HDD-2C
+# Provision by storage name (will destroy and re-provision if already labeled)
+proxmox-storage.sh --provision --only HDD-2C --force
 
 # Mix device paths and storage names
-proxmox-storage.sh --provision --only /dev/sdb --only SSD-3A
+proxmox-storage.sh --provision --only /dev/sdb --only SSD-3A --force
 ```
+
+> [!CAUTION]
+> Using `--only` makes the command **destructive** for the specified devices, even if they're already provisioned. The device(s) will be destroyed and re-provisioned.
 
 > [!TIP]
 > Use `lsblk` to see attached disks and identify the correct device path. Use `--status` to see existing storage labels.
@@ -224,6 +355,7 @@ When `--only` is used:
 - The system disk reclaim step is skipped.
 - A quick read-probe is performed before destructive actions.
 - Only disks matching the specified filter(s) are processed.
+- Matching disks are **destroyed and re-provisioned**, even if already provisioned.
 
 ## `--deprovision`
 
