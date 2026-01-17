@@ -340,7 +340,7 @@ auto_select_storage() {
     local storages
     
     # Get only storage available on THIS node (active status)
-    storages=$(pvesm status --enabled 1 2>/dev/null | awk 'NR>1 && $2=="active" {print $1}')
+    storages=$(pvesm status 2>/dev/null | awk 'NR>1 && $3=="active" {print $1}')
     
     if [[ -z "$storages" ]]; then
         echo "ERROR: No active storage found on this node." >&2
