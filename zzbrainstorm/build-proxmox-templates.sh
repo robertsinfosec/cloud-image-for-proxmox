@@ -336,8 +336,9 @@ auto_select_storage() {
             continue
         fi
         
-        # Categorize as SSD or HDD
-        if [[ "$storage" =~ (ssd|nvme|flash) ]]; then
+        # Categorize as SSD or HDD (case-insensitive)
+        local storage_lower=$(echo "$storage" | tr '[:upper:]' '[:lower:]')
+        if [[ "$storage_lower" =~ (ssd|nvme|flash) ]]; then
             ssds+=("$storage")
         else
             hdds+=("$storage")
