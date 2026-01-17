@@ -971,12 +971,8 @@ show_storage_mapping() {
   echo "╚════════════════════════════════════════════════════════════════════════════════╝"
   echo ""
   
-  # Check if there's any non-system storage
-  if [[ ${#storage_paths[@]} -eq 0 ]]; then
-    echo "  No device allocations found"
-    echo ""
-    return
-  fi
+  # Track whether we display any mappings
+  local found_mappings=0
   
   for sid in "${!storage_paths[@]}"; do
     local storage_type="${storage_types[$sid]}"
@@ -1028,7 +1024,14 @@ show_storage_mapping() {
     echo "    Mount: ${storage_path}"
     echo "    Device: ${mount_device}"
     echo ""
+    found_mappings=1
   done
+  
+  # If no mappings were displayed, show message
+  if [[ $found_mappings -eq 0 ]]; then
+    echo "  No device allocations found"
+    echo ""
+  fi
 }
 
 show_available_for_provisioning() {
