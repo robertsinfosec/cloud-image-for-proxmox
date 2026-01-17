@@ -151,7 +151,7 @@ Prints a concise table of attached disks and their characteristics using SMART d
 
 ### Example Output - Nothing Allocated
 
-Below is the output of one node when running with `--status` where :
+Below is the output of one node when running with `--status` where nothing has been provisioned yet:
 
 ```
 [*] Context: node=pve2 mode=status whatif=0 force=0 full_format=0 filters=all
@@ -279,10 +279,6 @@ If you pass `--extended`, the table includes:
 Example with `--extended`:
 
 ```
-[*] Context: node=pve1 mode=status whatif=0 force=0 full_format=0 filters=all
-[*] Checking root privileges
-[+] Running as root
-[*] Available storage summary
 Device     Size     Model                          Media        Health   Temp     Life      
 /dev/sda   476.9G   SPCC Solid State Disk          SSD          OK       194C     unknown   
 /dev/sdb    1.8T    ST2000LX001-1RG174             5400 rpm     OK       190C     unknown   
