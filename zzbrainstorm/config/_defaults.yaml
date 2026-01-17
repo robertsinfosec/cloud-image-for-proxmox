@@ -3,9 +3,13 @@
 # Copy any subsection under `defaults` into a build's `override` block.
 
 defaults:
-  # Auto-selects last SSD, fallback to last HDD
-  # Override with specific storage name like "SSD-1A" or "HDD-1C"
-  storage: auto
+  # Storage can be:
+  #   - Simple string: "auto" or specific name like "SSD-1A"
+  #   - Advanced config for auto-selection preferences:
+  storage:
+    device: auto              # "auto" or specific storage name
+    prefer_type: ssd          # "ssd" or "hdd" (when device is auto)
+    select_order: last        # "first" or "last" (when device is auto)
 
   cloud_init:
     user: sysadmin

@@ -357,6 +357,8 @@ generate_vmid() {
 
 auto_select_storage() {
     local quiet_mode="${1:-false}"
+    local prefer_type="${2:-ssd}"     # "ssd" or "hdd"
+    local select_order="${3:-last}"   # "first" or "last"
     local storages
     
     # Get only storage available on THIS node (active status)
@@ -389,16 +391,42 @@ auto_select_storage() {
     done <<< "$storages"
     
     local selected_storage=""
+    local primary_array
+    local fallback_array
+    local primary_label
+    local fallback_label
     
-    if [[ ${#ssds[@]} -gt 0 ]]; then
-        selected_storage="${ssds[-1]}"
-        if [[ "$quiet_mode" != "true" ]]; then
-            setStatus "Auto-selected storage: $selected_storage (last SSD found)" "*" >&2
+    # Determine preferred type and fallback
+    if [[ "$prefer_type" == "hdd" ]]; then
+        primary_array=("${hdds[@]}")
+        fallback_array=("${ssds[@]}")
+        primary_label="HDD"
+        fallback_label="SSD"
+    else
+        primary_array=("${ssds[@]}")
+        fallback_array=("${hdds[@]}")
+        primary_label="SSD"
+        fallback_label="HDD"
+    fi
+    
+    # Select from preferred type
+    if [[ ${#primary_array[@]} -gt 0 ]]; then
+        if [[ "$select_order" == "first" ]]; then
+            selected_storage="${primary_array[0]}"
+        else
+            selected_storage="${primary_array[-1]}"
         fi
-    elif [[ ${#hdds[@]} -gt 0 ]]; then
-        selected_storage="${hdds[-1]}"
         if [[ "$quiet_mode" != "true" ]]; then
-            setStatus "No SSD storage found. Using: $selected_storage (last HDD found)" "q" >&2
+            setStatus "Auto-selected storage: $selected_storage ($select_order $primary_label found)" "*" >&2
+        fi
+    elif [[ ${#fallback_array[@]} -gt 0 ]]; then
+        if [[ "$select_order" == "first" ]]; then
+            selected_storage="${fallback_array[0]}"
+        else
+            selected_storage="${fallback_array[-1]}"
+        fi
+        if [[ "$quiet_mode" != "true" ]]; then
+            setStatus "No $primary_label storage found. Using: $selected_storage ($select_order $fallback_label found)" "q" >&2
         fi
     else
         echo "ERROR: No suitable storage found on this node (all storage is excluded or local-only)." >&2
@@ -612,20 +640,37 @@ collect_build_meta() {
         BUILD_VMID=$(generate_vmid "$BUILD_DISTRO" "$BUILD_VERSION")
     fi
 
-    # Get storage (supports "auto" or specific name)
+    # Get storage (supports "auto", specific name, or advanced config)
     BUILD_STORAGE=$(resolve_value "$build_file" "$build_index" "storage" "$DEFAULT_STORAGE")
     if [[ -z "$BUILD_STORAGE" || "$BUILD_STORAGE" == "null" ]]; then
         echo "ERROR: Storage not set. Configure defaults.storage or override.storage."
         return 1
     fi
     
+    # Parse storage configuration (supports string or object)
+    local storage_device
+    local prefer_type="ssd"
+    local select_order="last"
+    
+    # Check if it's a YAML object (contains 'device:' key)
+    if echo "$BUILD_STORAGE" | grep -q "device:"; then
+        storage_device=$(echo "$BUILD_STORAGE" | yq eval '.device' -)
+        prefer_type=$(echo "$BUILD_STORAGE" | yq eval '.prefer_type // "ssd"' -)
+        select_order=$(echo "$BUILD_STORAGE" | yq eval '.select_order // "last"' -)
+    else
+        # Simple string format (backward compatible)
+        storage_device="$BUILD_STORAGE"
+    fi
+    
     # Handle auto storage selection
-    if [[ "$BUILD_STORAGE" == "auto" ]]; then
-        BUILD_STORAGE=$(auto_select_storage true)
+    if [[ "$storage_device" == "auto" ]]; then
+        BUILD_STORAGE=$(auto_select_storage true "$prefer_type" "$select_order")
         if [[ $? -ne 0 ]]; then
             echo "ERROR: Failed to auto-select storage."
             return 1
         fi
+    else
+        BUILD_STORAGE="$storage_device"
     fi
     
     # Verify storage exists
@@ -1050,8 +1095,16 @@ if [[ ${#PLANNED_BUILDS[@]} -eq 0 ]]; then
 fi
 
 # Display auto-selected storage once (if using auto mode)
-if [[ "$DEFAULT_STORAGE" == "auto" ]]; then
-    _temp_storage=$(auto_select_storage false)
+if [[ "$DEFAULT_STORAGE" == "auto" ]] || echo "$DEFAULT_STORAGE" | grep -q "device:"; then
+    # Parse storage preferences for display
+    local display_prefer="ssd"
+    local display_order="last"
+    if echo "$DEFAULT_STORAGE" | grep -q "device:"; then
+        display_prefer=$(echo "$DEFAULT_STORAGE" | yq eval '.prefer_type // "ssd"' -)
+        display_order=$(echo "$DEFAULT_STORAGE" | yq eval '.select_order // "last"' -)
+    fi
+    
+    _temp_storage=$(auto_select_storage false "$display_prefer" "$display_order")
 fi
 
 setStatus "Planned builds: ${#PLANNED_BUILDS[@]} template(s)" "*"

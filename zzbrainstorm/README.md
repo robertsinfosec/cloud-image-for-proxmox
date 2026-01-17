@@ -114,27 +114,63 @@ VMIDs are **automatically generated** using a 6-digit formula:
 
 ### Storage Auto-Selection
 
-Storage is **automatically selected** with intelligent detection:
+Storage is **automatically selected** with intelligent detection and configurable preferences.
 
-**Selection Priority:**
-1. **Last SSD storage** (name patterns: `ssd`, `nvme`, `flash`)
-2. **Last HDD storage** (fallback if no SSD)
-3. **First available storage** (last resort)
+**Default Behavior:**
+- Prefers SSD storage (patterns: `ssd`, `nvme`, `flash`)
+- Selects "last" matching storage (keeps "first" for active VMs)
+- Falls back to HDD if no SSD found
+- Filters out: cluster storage not on node, system storage (`local`, `local-lvm`, `pve`)
 
-**Filtered:**
-- ❌ Cluster storage not available on current node
-- ❌ System storage (`local`, `local-lvm`, `pve`)
-- ✅ Only active, locally accessible storage
-
-> [!NOTE]
-> Templates typically go on the "last" storage device to keep "first" devices for active VMs.
-
-**Override auto-selection:**
+**Configuration Options:**
 
 ```yaml
-# In config/_defaults.yaml or per-build override
-storage: SSD-1A  # Use specific storage
+# Simple string format (backward compatible)
+storage: auto           # Uses defaults (last SSD, fallback HDD)
+storage: SSD-1A         # Specific storage name
+
+# Advanced configuration with preferences
+storage:
+  device: auto          # "auto" or specific storage name
+  prefer_type: ssd      # "ssd" or "hdd"
+  select_order: last    # "first" or "last"
 ```
+
+**Examples:**
+
+```yaml
+# Default: last SSD (current behavior)
+storage:
+  device: auto
+  prefer_type: ssd
+  select_order: last
+
+# Use first SSD instead
+storage:
+  device: auto
+  prefer_type: ssd
+  select_order: first
+
+# Prefer HDD for cost savings
+storage:
+  device: auto
+  prefer_type: hdd
+  select_order: last
+
+# Per-build override
+builds:
+  - distro: ubuntu
+    version: "24.04"
+    release: noble
+    override:
+      storage:
+        device: auto
+        prefer_type: hdd
+        select_order: first
+```
+
+> [!NOTE]
+> Storage preferences apply only when `device: auto`. Specific storage names always take precedence.
 
 ## Build Status Tracking
 
