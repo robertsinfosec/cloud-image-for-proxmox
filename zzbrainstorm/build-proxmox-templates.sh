@@ -315,6 +315,7 @@ generate_vmid() {
 }
 
 auto_select_storage() {
+    local quiet_mode="${1:-false}"
     local storages
     
     storages=$(pvesm status --enabled 1 2>/dev/null | awk 'NR>1 {print $1}')
@@ -349,10 +350,14 @@ auto_select_storage() {
     
     if [[ ${#ssds[@]} -gt 0 ]]; then
         selected_storage="${ssds[-1]}"
-        setStatus "Auto-selected storage: $selected_storage (last SSD found)" "*" >&2
+        if [[ "$quiet_mode" != "true" ]]; then
+            setStatus "Auto-selected storage: $selected_storage (last SSD found)" "*" >&2
+        fi
     elif [[ ${#hdds[@]} -gt 0 ]]; then
         selected_storage="${hdds[-1]}"
-        setStatus "No SSD storage found. Using: $selected_storage (last HDD found)" "q" >&2
+        if [[ "$quiet_mode" != "true" ]]; then
+            setStatus "No SSD storage found. Using: $selected_storage (last HDD found)" "q" >&2
+        fi
     else
         echo "ERROR: No suitable storage found (all storage is excluded or local-only)." >&2
         return 1
@@ -588,7 +593,7 @@ collect_build_meta() {
     
     # Handle auto storage selection
     if [[ "$BUILD_STORAGE" == "auto" ]]; then
-        BUILD_STORAGE=$(auto_select_storage)
+        BUILD_STORAGE=$(auto_select_storage true)
         if [[ $? -ne 0 ]]; then
             echo "ERROR: Failed to auto-select storage."
             return 1
@@ -722,7 +727,7 @@ setStatus "Planning build execution" "*"
 PLANNED_BUILDS=()
 for build_file in "${BUILD_FILES[@]}"; do
     build_count=$(yq_read ".builds | length" "$build_file")
-    if [[ "$build_count" == "null" || "$build_count" == "0" ]]; then
+    if [[ "$build_count" == "null" || "$build_count" == "0" || ! "$build_count" =~ ^[0-9]+$ ]]; then
         continue
     fi
 
@@ -751,6 +756,11 @@ done
 if [[ ${#PLANNED_BUILDS[@]} -eq 0 ]]; then
     setStatus "No builds matched filters." "f"
     exit 1
+fi
+
+# Display auto-selected storage once (if using auto mode)
+if [[ "$DEFAULT_STORAGE" == "auto" ]]; then
+    _temp_storage=$(auto_select_storage false)
 fi
 
 setStatus "Planned builds: ${#PLANNED_BUILDS[@]} template(s)" "*"
