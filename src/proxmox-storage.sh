@@ -1656,9 +1656,9 @@ show_storage_mapping() {
           continue
         fi
         
-        # Get base device
+        # Get base device - handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
         local base_device size model
-        base_device=$(echo "$mount_device" | sed 's/[0-9]*$//')
+        base_device=$(echo "$mount_device" | sed 's|p\?[0-9]\+$||')
         
         if [[ -n "$base_device" && -b "$base_device" ]]; then
           size=$(lsblk -ndo SIZE "$base_device" 2>/dev/null || echo "?")
@@ -1677,7 +1677,8 @@ show_storage_mapping() {
         pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$sid" '$2==vg {print $1; exit}')
         
         if [[ -n "$pv_device" ]]; then
-          base_device=$(echo "$pv_device" | sed 's/[0-9]*$//')
+          # Handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
+          base_device=$(echo "$pv_device" | sed 's|p\?[0-9]\+$||')
           local size model
           size=$(lsblk -ndo SIZE "$base_device" 2>/dev/null || echo "?")
           model=$(lsblk -ndo MODEL "$base_device" 2>/dev/null | xargs || echo "Unknown")
