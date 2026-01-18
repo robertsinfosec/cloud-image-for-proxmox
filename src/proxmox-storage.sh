@@ -669,6 +669,36 @@ matches_any_filter() {
   return 1
 }
 
+validate_storage_filters() {
+  local mode="$1"  # "provision" or "deprovision"
+  
+  # No filters = no validation needed
+  if [[ ${#ONLY_FILTERS[@]} -eq 0 ]]; then
+    return 0
+  fi
+  
+  # Check each filter that looks like a storage name
+  for filter in "${ONLY_FILTERS[@]}"; do
+    if [[ "$filter" =~ ^[a-zA-Z]+-[0-9]+[A-Z]$ ]]; then
+      # This looks like a storage name (e.g., HDD-2C)
+      # Check if it exists in Proxmox storage config
+      local exists=0
+      while IFS='|' read -r type sid path nodes shared; do
+        if [[ "$sid" == "$filter" ]]; then
+          exists=1
+          break
+        fi
+      done < <(parse_storage_cfg)
+      
+      if [[ "$mode" == "deprovision" && "$exists" -eq 0 ]]; then
+        die "Storage '$filter' does not exist in Proxmox.\n       Cannot deprovision non-existent storage.\n       Use 'pvesm status' to list existing storage, or use a device path like '--only /dev/sde'"
+      elif [[ "$mode" == "provision" && "$exists" -eq 1 ]]; then
+        die "Storage '$filter' already exists in Proxmox.\n       Cannot provision over existing storage.\n       Either deprovision it first, or use a device path like '--only /dev/sde'"
+      fi
+    fi
+  done
+}
+
 list_non_system_disks() {
   local sysdisk="$1"
   mapfile -t disks < <(lsblk -dn -o NAME,TYPE | awk '$2=="disk"{print "/dev/"$1}')
@@ -1003,6 +1033,9 @@ provision_nfs() {
 provision_data_disks() {
   local sysdisk="$1"
   local hd="$2"
+
+  # Validate storage name filters before proceeding
+  validate_storage_filters "provision"
 
   if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
     p_info "Provisioning filtered disk(s) as Proxmox storage: filters=[${ONLY_FILTERS[*]}] sysdisk=$sysdisk hostdigit=$hd"
@@ -2127,6 +2160,10 @@ wipe_non_system_disks() {
 
 deprovision_all() {
   local sysdisk="$1"
+  
+  # Validate storage name filters before proceeding
+  validate_storage_filters "deprovision"
+  
   if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
     p_info "Deprovisioning filtered storage/disks: ${ONLY_FILTERS[*]}"
   else
