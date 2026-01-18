@@ -1414,35 +1414,40 @@ show_available_storage() {
     [[ -n "$sid" ]] || continue
     [[ "$sid" == "local" || "$sid" == "local-lvm" ]] && continue
     
-    if [[ -z "$path" ]]; then
-      continue
-    fi
-    
-    # Get mount device for this storage path
-    local mount_device base_device
-    mount_device=$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || echo "")
-    
-    if [[ -n "$mount_device" ]]; then
-      # Resolve to base disk device (strip partition numbers)
-      if [[ "$mount_device" =~ ^/dev/mapper/ ]] || [[ "$mount_device" =~ ^/dev/dm- ]]; then
-        # LVM - get PV
-        local vg_name pv_device
-        vg_name=$(lvs --noheadings -o vg_name "$mount_device" 2>/dev/null | xargs || echo "")
-        if [[ -n "$vg_name" ]]; then
-          pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$vg_name" '$2==vg {print $1}' | head -1)
-          if [[ -n "$pv_device" ]]; then
-            base_device=$(echo "$pv_device" | sed 's|/dev/||; s|[0-9]*$||')
+    # Handle different storage types
+    case "$type" in
+      dir)
+        # Directory storage - use mount point
+        if [[ -z "$path" ]]; then
+          continue
+        fi
+        
+        local mount_device base_device
+        mount_device=$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || echo "")
+        
+        if [[ -n "$mount_device" ]]; then
+          base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
+          if [[ -n "$base_device" ]]; then
+            device_storage_map["$base_device"]="$sid"
           fi
         fi
-      else
-        # Direct partition - strip numbers
-        base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
-      fi
-      
-      if [[ -n "$base_device" ]]; then
-        device_storage_map["$base_device"]="$sid"
-      fi
-    fi
+        ;;
+      lvm|lvmthin)
+        # LVM storage - find PV for VG
+        # VG name should match storage ID for our naming scheme
+        local pv_device base_device
+        pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$sid" '$2==vg {print $1; exit}')
+        if [[ -n "$pv_device" ]]; then
+          base_device=$(echo "$pv_device" | sed 's|/dev/||; s|[0-9]*$||')
+          if [[ -n "$base_device" ]]; then
+            device_storage_map["$base_device"]="$sid"
+          fi
+        fi
+        ;;
+      nfs)
+        # NFS storage - doesn't map to a device
+        ;;
+    esac
   done < <(parse_storage_cfg)
   
   # Display device table with storage status
@@ -1511,57 +1516,77 @@ show_storage_mapping() {
   # Track whether we display any mappings
   local found_mappings=0
   
-  for sid in "${!storage_paths[@]}"; do
+  for sid in "${!storage_types[@]}"; do
     local storage_type="${storage_types[$sid]}"
     local storage_path="${storage_paths[$sid]}"
     
-    if [[ -z "$storage_path" ]]; then
-      continue
-    fi
-    
-    # Get mount device
-    local mount_device
-    mount_device=$(findmnt -n -o SOURCE --target "$storage_path" 2>/dev/null || echo "")
-    
-    if [[ -z "$mount_device" ]]; then
-      # Path might not be mounted, skip
-      continue
-    fi
-    
-    # Resolve to underlying physical device
-    local base_device=""
-    local device_info=""
-    
-    # Check if it's an LVM device
-    if [[ "$mount_device" =~ ^/dev/mapper/ ]] || [[ "$mount_device" =~ ^/dev/dm- ]]; then
-      # LVM - trace back to PV
-      local vg_name lv_name pv_device
-      vg_name=$(lvs --noheadings -o vg_name "$mount_device" 2>/dev/null | xargs || echo "")
-      if [[ -n "$vg_name" ]]; then
-        pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$vg_name" '$2==vg {print $1}' | head -1)
+    case "$storage_type" in
+      dir)
+        if [[ -z "$storage_path" ]]; then
+          continue
+        fi
+        
+        # Get mount device
+        local mount_device
+        mount_device=$(findmnt -n -o SOURCE --target "$storage_path" 2>/dev/null || echo "")
+        
+        if [[ -z "$mount_device" ]]; then
+          continue
+        fi
+        
+        # Get base device
+        local base_device size model
+        base_device=$(echo "$mount_device" | sed 's/[0-9]*$//')
+        
+        if [[ -n "$base_device" && -b "$base_device" ]]; then
+          size=$(lsblk -ndo SIZE "$base_device" 2>/dev/null || echo "?")
+          model=$(lsblk -ndo MODEL "$base_device" 2>/dev/null | xargs || echo "Unknown")
+          
+          echo -e "  ${C_OK}${sid}${NC} (${storage_type}) → ${base_device} (${size}, ${model})"
+          echo "    Mount: ${storage_path}"
+          echo "    Device: ${mount_device}"
+          echo ""
+          found_mappings=1
+        fi
+        ;;
+      lvm|lvmthin)
+        # LVM storage - VG name matches storage ID
+        local pv_device base_device
+        pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$sid" '$2==vg {print $1; exit}')
+        
         if [[ -n "$pv_device" ]]; then
           base_device=$(echo "$pv_device" | sed 's/[0-9]*$//')
+          local size model
+          size=$(lsblk -ndo SIZE "$base_device" 2>/dev/null || echo "?")
+          model=$(lsblk -ndo MODEL "$base_device" 2>/dev/null | xargs || echo "Unknown")
+          
+          echo -e "  ${C_OK}${sid}${NC} (${storage_type}) → ${base_device} (${size}, ${model})"
+          echo "    VG: ${sid}"
+          echo "    PV: ${pv_device}"
+          
+          if [[ "$storage_type" == "lvmthin" ]]; then
+            # Show thin pool info
+            local pool_name pool_data
+            pool_name=$(lvs --noheadings -o lv_name,lv_attr "$sid" 2>/dev/null | awk '$2 ~ /^t/ {print $1; exit}')
+            if [[ -n "$pool_name" ]]; then
+              pool_data=$(lvs --noheadings -o data_percent "$sid/$pool_name" 2>/dev/null | awk '{printf "%.1f%%", $1}')
+              echo "    Thin Pool: ${pool_name} (Used: ${pool_data})"
+            fi
+          fi
+          echo ""
+          found_mappings=1
         fi
-      fi
-    else
-      # Direct mount - strip partition number to get base device
-      base_device=$(echo "$mount_device" | sed 's/[0-9]*$//')
-    fi
-    
-    # Get device details
-    if [[ -n "$base_device" && -b "$base_device" ]]; then
-      local size model
-      size=$(lsblk -ndo SIZE "$base_device" 2>/dev/null || echo "?")
-      model=$(lsblk -ndo MODEL "$base_device" 2>/dev/null | xargs || echo "Unknown")
-      device_info=" → ${base_device} (${size}, ${model})"
-    fi
-    
-    # Print storage entry
-    echo -e "  ${C_OK}${sid}${NC} (${storage_type})${device_info}"
-    echo "    Mount: ${storage_path}"
-    echo "    Device: ${mount_device}"
-    echo ""
-    found_mappings=1
+        ;;
+      nfs)
+        # NFS storage
+        if [[ -n "$storage_path" ]]; then
+          echo -e "  ${C_OK}${sid}${NC} (${storage_type}) → Network Storage"
+          echo "    Mount: ${storage_path}"
+          echo ""
+          found_mappings=1
+        fi
+        ;;
+    esac
   done
   
   # If no mappings were displayed, show message
