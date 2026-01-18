@@ -1600,37 +1600,46 @@ show_available_for_provisioning() {
   local sysdisk
   sysdisk="$(get_system_disk)"
   
-  # Build device-to-storage mapping
+  # Build device-to-storage mapping (same logic as show_available_storage)
   declare -A device_storage_map
   while IFS='|' read -r type sid path nodes shared; do
     [[ -n "$sid" ]] || continue
     [[ "$sid" == "local" || "$sid" == "local-lvm" ]] && continue
     
-    if [[ -z "$path" ]]; then
-      continue
-    fi
-    
-    local mount_device base_device
-    mount_device=$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || echo "")
-    
-    if [[ -n "$mount_device" ]]; then
-      if [[ "$mount_device" =~ ^/dev/mapper/ ]] || [[ "$mount_device" =~ ^/dev/dm- ]]; then
-        local vg_name pv_device
-        vg_name=$(lvs --noheadings -o vg_name "$mount_device" 2>/dev/null | xargs || echo "")
-        if [[ -n "$vg_name" ]]; then
-          pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$vg_name" '$2==vg {print $1}' | head -1)
-          if [[ -n "$pv_device" ]]; then
-            base_device=$(echo "$pv_device" | sed 's|/dev/||; s|[0-9]*$||')
+    # Handle different storage types
+    case "$type" in
+      dir)
+        # Directory storage - use mount point
+        if [[ -z "$path" ]]; then
+          continue
+        fi
+        
+        local mount_device base_device
+        mount_device=$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || echo "")
+        
+        if [[ -n "$mount_device" ]]; then
+          base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
+          if [[ -n "$base_device" ]]; then
+            device_storage_map["$base_device"]="$sid"
           fi
         fi
-      else
-        base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
-      fi
-      
-      if [[ -n "$base_device" ]]; then
-        device_storage_map["$base_device"]="$sid"
-      fi
-    fi
+        ;;
+      lvm|lvmthin)
+        # LVM storage - find PV for VG
+        # VG name should match storage ID for our naming scheme
+        local pv_device base_device
+        pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$sid" '$2==vg {print $1; exit}')
+        if [[ -n "$pv_device" ]]; then
+          base_device=$(echo "$pv_device" | sed 's|/dev/||; s|[0-9]*$||')
+          if [[ -n "$base_device" ]]; then
+            device_storage_map["$base_device"]="$sid"
+          fi
+        fi
+        ;;
+      nfs)
+        # NFS storage - doesn't map to a device
+        ;;
+    esac
   done < <(parse_storage_cfg)
   
   # Find unallocated devices
