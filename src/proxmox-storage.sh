@@ -435,13 +435,13 @@ disk_is_rotational() {
 
 next_letter() {
   local typ="$1" hd="$2"
-  local used letters
+  local used letters vg_names vg_list
   
   # Check partition labels (for dir storage)
   used="$(blkid -o value -s LABEL 2>/dev/null | grep -E "^${typ}-${hd}[A-Z]$" || true)"
   
   # Also check LVM VG names (for lvm/lvm-thin storage)
-  local vg_names vg_list
+  vg_names=""
   vg_list="$(vgs --noheadings -o vg_name 2>/dev/null | awk '{print $1}' || true)"
   
   # Filter VG names that match our pattern
