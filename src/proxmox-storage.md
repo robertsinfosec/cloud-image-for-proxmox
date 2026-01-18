@@ -98,15 +98,184 @@ If your cluster has nodes `pve1`, `pve2`, and `pve3`, each node will label its o
 > [!NOTE]
 > Storage operations are node‑local and skip shared storage. This prevents accidental changes to other nodes’ disks.
 
+
+## Storage types
+
+The script supports multiple Proxmox storage backends via the `--type` option:
+
+### Quick Comparison
+
+| Feature | dir | lvm | lvm-thin | nfs |
+|---------|-----|-----|----------|-----|
+| **Snapshots** | ❌ | ❌ | ✅ | Depends on NAS |
+| **Thin Provisioning** | ❌ | ❌ | ✅ | Depends on NAS |
+| **Shared Storage** | ❌ | ❌ | ❌ | ✅ |
+| **Performance** | Good | Better | Good | Network-dependent |
+| **Complexity** | Simple | Medium | Medium | Low (client-side) |
+| **Over-provisioning** | ❌ | ❌ | ✅ | Depends on NAS |
+| **Best For** | General purpose | Block storage needing flexibility | **VMs (recommended)** | Cluster shared storage |
+| **Storage Name** | `HDD-#A` / `SSD-#A` | `HDD-#A` / `SSD-#A` | `HDD-#A` / `SSD-#A` | `NFS-#A` |
+
+> [!TIP]
+> **For VM workloads, use `--type lvm-thin`**. It provides snapshots, efficient clones, and better space utilization—exactly what you want for virtual machines.
+
+### Directory Storage (`--type dir`, default)
+
+**What it is:** Traditional filesystem-based storage using ext4 on dedicated partitions.
+
+**When to use:**
+- Simple, universal storage that works everywhere
+- Good for general-purpose VM/CT storage
+- Easiest to understand and troubleshoot
+
+**How it works:**
+- Creates GPT partition on disk
+- Formats as ext4 with optimizations for large files
+- Mounts at `/mnt/disks/<label>`
+- Adds to Proxmox as `dir` type storage
+
+**Pros:**
+- Simple, well-understood
+- No additional complexity
+- Easy backup and recovery
+
+**Cons:**
+- No snapshots
+- No thin provisioning
+- No advanced features
+
+### LVM (`--type lvm`)
+
+**What it is:** Logical Volume Manager with thick provisioning.
+
+**When to use:**
+- Need block-level storage management
+- Want flexibility to resize volumes
+- Don't need thin provisioning or snapshots
+
+**How it works:**
+- Creates GPT partition (type 8e00 = Linux LVM)
+- Initializes as LVM Physical Volume (PV)
+- Creates Volume Group (VG) with storage label as name
+- Proxmox creates Logical Volumes (LVs) as needed
+
+**Pros:**
+- Flexible volume management
+- Can resize volumes
+- Better performance than directory storage
+
+**Cons:**
+- No thin provisioning (space allocated immediately)
+- No automatic snapshots
+- Slightly more complex than directory storage
+
+### LVM-Thin (`--type lvm-thin`, recommended for VMs)
+
+**What it is:** LVM with thin provisioning and snapshot support.
+
+**When to use:**
+- **VM storage** (recommended)
+- Need efficient snapshots
+- Want to overcommit storage
+- Need space-efficient clones
+
+**How it works:**
+- Creates LVM setup (PV → VG)
+- Creates thin pool (95% of VG space)
+- Proxmox creates thin LVs within pool as needed
+
+**Pros:**
+- ✅ Efficient snapshots (copy-on-write)
+- ✅ Thin provisioning (allocate on demand)
+- ✅ Fast clones
+- ✅ Better space utilization
+- ✅ Proxmox's preferred method for local VM storage
+
+**Cons:**
+- Slightly more complex than regular LVM
+- Need to monitor thin pool usage
+- Performance overhead (minimal)
+
+> [!TIP]
+> **For VM workloads, use `--type lvm-thin`**. This is Proxmox's recommended approach and gives you snapshots, efficient clones, and better space utilization. It's what Proxmox uses by default with `local-lvm` (which this script removes and replaces with per-disk thin pools).
+
+### NFS (`--type nfs`)
+
+**What it is:** Network filesystem from a remote NFS server.
+
+**When to use:**
+- Shared storage across cluster nodes
+- Centralized storage server
+- Need to access same data from multiple nodes
+
+**How it works:**
+- Mounts NFS export at `/mnt/nfs/<storage-id>`
+- Adds to fstab for persistence
+- Registers with Proxmox as NFS storage
+- Storage named `NFS-#A`, `NFS-#B`, etc. (where `#` is node digit)
+
+**Additional options:**
+- `--nfs-server <hostname>` - NFS server (required)
+- `--nfs-path <path>` - Export path (required)
+- `--nfs-options <opts>` - Mount options (default: `vers=3,soft`)
+
+**Pros:**
+- Shared across cluster (not node-local)
+- Centralized management
+- Can use advanced NAS features
+
+**Cons:**
+- Network dependency
+- Performance depends on network
+- Single point of failure (if server goes down)
+
+> [!NOTE]
+> NFS storage is fundamentally different from disk-based storage types. It doesn't provision local disks and cannot be used with `--only` filters. Each NFS mount gets a unique `NFS-#A` style name on each node.
+
+## Choosing a storage type
+
+**Simple setups (single node, basic storage):**
+```bash
+./proxmox-storage.sh --provision --force  # Uses dir by default
+```
+
+**VM-optimized storage (recommended):**
+```bash
+./proxmox-storage.sh --provision --type lvm-thin --force
+```
+
+**Shared storage across cluster:**
+```bash
+./proxmox-storage.sh --provision --type nfs \
+  --nfs-server 192.168.1.100 \
+  --nfs-path /export/proxmox \
+  --force
+```
+
+> [!CAUTION]
+> **Do not mix storage types on the same disk.** Once a disk is provisioned with one type (e.g., `dir`), re-provisioning with a different type (e.g., `lvm-thin`) requires `--all` or `--only` to destroy and re-create.
+
 ## Naming convention
 
 Disk labels and storage IDs follow this pattern:
-`HDD-<N><Letter>` or `SSD-<N><Letter>`
+`HDD-<N><Letter>`, `SSD-<N><Letter>`, or `NFS-<N><Letter>`
 
-`<N>` is taken from the node hostname (e.g., `pve1` → `1`). `Letter` increments per disk of the same type.
+**Disk-based storage (dir, lvm, lvm-thin):**
+- `HDD-<N><Letter>` - Rotational disk storage
+- `SSD-<N><Letter>` - Solid-state disk storage
+
+**Network storage (nfs):**
+- `NFS-<N><Letter>` - Network filesystem mounts
+
+`<N>` is taken from the node hostname (e.g., `pve1` -> `1`). `Letter` increments per storage type on that node.
+
+**Examples:**
+- Node `pve2` with 2 HDDs and 1 SSD: `HDD-2A`, `HDD-2B`, `SSD-2A`
+- Node `pve3` with 1 NFS mount: `NFS-3A`
+- Node `pve1` with mixed: `HDD-1A` (lvm-thin), `SSD-1A` (dir), `NFS-1A`
 
 > [!NOTE]
-> We only distinguish **HDD vs SSD** on purpose. We intentionally do **not** split further (e.g., SATA SSD vs NVMe) because it adds complexity without much operational value. The key question for operators is: “Is this slow, rotational storage or solid‑state?” That’s what matters most for placement decisions like OS disks.
+> We distinguish **HDD vs SSD vs NFS** on purpose. The storage name tells you the **media speed/location**, not the backend technology. The backend type (dir/lvm/lvmthin) is visible in Proxmox UI. This is operationally valuable: you can instantly tell if a VM is on fast storage (SSD), slow storage (HDD), or network storage (NFS).
 
 ### Usage
 

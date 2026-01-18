@@ -134,6 +134,18 @@ cd src
 # Provision only new/unused disks (safe, repeatable)
 ./proxmox-storage.sh --provision --force
 
+# Provision as LVM-Thin (recommended for VMs - enables snapshots)
+./proxmox-storage.sh --provision --type lvm-thin --force
+
+# Provision as LVM thick provisioning
+./proxmox-storage.sh --provision --type lvm --force
+
+# Add NFS shared storage (cluster-wide)
+./proxmox-storage.sh --provision --type nfs \
+  --nfs-server nas.example.com \
+  --nfs-path /mnt/pool1/proxmox \
+  --force
+
 # Destroy and re-provision ALL storage (destructive!)
 ./proxmox-storage.sh --provision --all --force
 

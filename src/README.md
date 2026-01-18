@@ -24,7 +24,7 @@ Below is the detailed usage information:
 
 ```bash
 Usage:
-  proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--all] [--only <filter>]
+  proxmox-storage.sh --provision [--type <type>] [--force] [--whatif] [--full-format] [--all] [--only <filter>]
   proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
   proxmox-storage.sh --rename <old-name>:<new-name> [--force]
   proxmox-storage.sh --list-usage <storage-name>
@@ -34,6 +34,14 @@ Usage:
 Options:
   --provision         Provision unused/new disks only (safe default)
   --deprovision       Deprovision non-system storage (destructive)
+  --type <type>       Storage type: dir, lvm, lvm-thin, nfs (default: dir)
+                      - dir: Directory storage with ext4 filesystem
+                      - lvm: LVM thick-provisioned volumes
+                      - lvm-thin: LVM thin-provisioned volumes (recommended for VMs)
+                      - nfs: Network filesystem (requires --nfs-server and --nfs-path)
+  --nfs-server <host> NFS server hostname or IP (required with --type nfs)
+  --nfs-path <path>   NFS export path (required with --type nfs)
+  --nfs-options <opts> NFS mount options (default: vers=3,soft)
   --rename            Rename existing storage (non-destructive)
                       Format: --rename old-name:new-name
                       Example: --rename pve-disk-storage1:SSD-1C
@@ -43,7 +51,7 @@ Options:
   --force             Skip confirmation prompt
   --whatif, --simulate
                       Show what would be done without making changes
-  --full-format       Slower, full ext4 format (default is quick)
+  --full-format       Slower, full ext4 format (default is quick, dir type only)
   --status            Show storage status and available devices
   --extended          Show additional SMART health fields
   --only <filter>     Filter to specific device(s) or storage name(s) (repeatable)
@@ -51,8 +59,17 @@ Options:
   --help              Show this help
 
 Examples:
-  # Provision only new/unused devices (safe)
+  # Provision as directory storage (default)
   ./proxmox-storage.sh --provision --force
+
+  # Provision as LVM-Thin for VM storage with snapshots
+  ./proxmox-storage.sh --provision --type lvm-thin --force
+
+  # Provision as LVM thick provisioning
+  ./proxmox-storage.sh --provision --type lvm --force
+
+  # Add NFS storage
+  ./proxmox-storage.sh --provision --type nfs --nfs-server 192.168.1.100 --nfs-path /export/storage --force
 
   # Destroy and re-provision ALL storage (destructive)
   ./proxmox-storage.sh --provision --all --force

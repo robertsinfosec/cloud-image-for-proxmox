@@ -32,6 +32,10 @@ ONLY_FILTERS=()
 OLD_STORAGE_NAME=""
 NEW_STORAGE_NAME=""
 STORAGE_NAME=""
+STORAGE_TYPE="dir"  # dir, lvm, lvm-thin, nfs
+NFS_SERVER=""
+NFS_PATH=""
+NFS_OPTIONS="vers=3,soft"
 
 log_context() {
   local node
@@ -40,13 +44,13 @@ log_context() {
   if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
     filters="${ONLY_FILTERS[*]}"
   fi
-  p_info "Context: node=$node mode=${MODE:-unset} whatif=$WHATIF force=$FORCE full_format=$((1-QUICK_FORMAT)) all=$ALL filters=$filters"
+  p_info "Context: node=$node mode=${MODE:-unset} type=$STORAGE_TYPE whatif=$WHATIF force=$FORCE full_format=$((1-QUICK_FORMAT)) all=$ALL filters=$filters"
 }
 
 usage() {
   cat <<'EOF'
 Usage:
-  proxmox-storage.sh --provision [--force] [--whatif] [--full-format] [--all] [--only <filter>]
+  proxmox-storage.sh --provision [--type <type>] [--force] [--whatif] [--full-format] [--all] [--only <filter>]
   proxmox-storage.sh --deprovision [--force] [--whatif] [--only <filter>]
   proxmox-storage.sh --rename <old-name>:<new-name> [--force]
   proxmox-storage.sh --list-usage <storage-name>
@@ -56,6 +60,14 @@ Usage:
 Options:
   --provision         Provision unused/new disks only (safe default)
   --deprovision       Deprovision non-system storage (destructive)
+  --type <type>       Storage type: dir, lvm, lvm-thin, nfs (default: dir)
+                      - dir: Directory storage with ext4 filesystem
+                      - lvm: LVM thick-provisioned volumes
+                      - lvm-thin: LVM thin-provisioned volumes (recommended for VMs)
+                      - nfs: Network filesystem (requires --nfs-server and --nfs-path)
+  --nfs-server <host> NFS server hostname or IP (required with --type nfs)
+  --nfs-path <path>   NFS export path (required with --type nfs)
+  --nfs-options <opts> NFS mount options (default: vers=3,soft)
   --rename            Rename existing storage (non-destructive)
                       Format: --rename old-name:new-name
                       Example: --rename pve-disk-storage1:SSD-1C
@@ -65,7 +77,7 @@ Options:
   --force             Skip confirmation prompt
   --whatif, --simulate
                       Show what would be done without making changes
-  --full-format       Slower, full ext4 format (default is quick)
+  --full-format       Slower, full ext4 format (default is quick, dir type only)
   --status            Show storage status and available devices
   --extended          Show additional SMART health fields
   --only <filter>     Filter to specific device(s) or storage name(s) (repeatable)
@@ -73,8 +85,17 @@ Options:
   --help              Show this help
 
 Examples:
-  # Provision only new/unused devices (safe)
+  # Provision as directory storage (default)
   ./proxmox-storage.sh --provision --force
+
+  # Provision as LVM-Thin for VM storage with snapshots
+  ./proxmox-storage.sh --provision --type lvm-thin --force
+
+  # Provision as LVM thick provisioning
+  ./proxmox-storage.sh --provision --type lvm --force
+
+  # Add NFS storage
+  ./proxmox-storage.sh --provision --type nfs --nfs-server 192.168.1.100 --nfs-path /export/storage --force
 
   # Destroy and re-provision ALL storage (destructive)
   ./proxmox-storage.sh --provision --all --force
@@ -137,6 +158,33 @@ parse_args() {
       --all)
         ALL=1
         ;;
+      --type)
+        shift
+        [[ -n "${1:-}" ]] || die "--type requires a value (dir, lvm, lvm-thin, or nfs)"
+        case "$1" in
+          dir|lvm|lvm-thin|nfs)
+            STORAGE_TYPE="$1"
+            ;;
+          *)
+            die "Invalid --type value: $1 (must be: dir, lvm, lvm-thin, or nfs)"
+            ;;
+        esac
+        ;;
+      --nfs-server)
+        shift
+        [[ -n "${1:-}" ]] || die "--nfs-server requires a hostname or IP"
+        NFS_SERVER="$1"
+        ;;
+      --nfs-path)
+        shift
+        [[ -n "${1:-}" ]] || die "--nfs-path requires a path"
+        NFS_PATH="$1"
+        ;;
+      --nfs-options)
+        shift
+        [[ -n "${1:-}" ]] || die "--nfs-options requires mount options"
+        NFS_OPTIONS="$1"
+        ;;
       --only)
         shift
         [[ -n "${1:-}" ]] || die "--only requires a value (device path or storage name)"
@@ -158,6 +206,19 @@ parse_args() {
   if [[ -z "$MODE" ]]; then
     usage
     exit 1
+  fi
+
+  # Validate NFS requirements
+  if [[ "$STORAGE_TYPE" == "nfs" ]]; then
+    if [[ -z "$NFS_SERVER" ]]; then
+      die "--type nfs requires --nfs-server\n       Example: --type nfs --nfs-server 192.168.1.100 --nfs-path /export/storage"
+    fi
+    if [[ -z "$NFS_PATH" ]]; then
+      die "--type nfs requires --nfs-path\n       Example: --type nfs --nfs-server 192.168.1.100 --nfs-path /export/storage"
+    fi
+    if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+      die "--type nfs cannot be used with --only (NFS doesn't provision local disks)\n       NFS storage is network-based and doesn't map to specific devices.\n       Remove --only flag to provision NFS storage."
+    fi
   fi
 }
 
@@ -429,6 +490,55 @@ ensure_pvesm_storage() {
   run_cmd "Adding Proxmox storage '$sid' at $path" pvesm add dir "$sid" --path "$path" --content "$content" --is_mountpoint 1 --nodes "$node" --shared 0
 }
 
+ensure_pvesm_lvm_storage() {
+  local sid="$1" vgname="$2"
+  local content="images,rootdir"
+  local node
+  node="$(hostname -s)"
+
+  p_info "Ensuring Proxmox LVM storage '$sid' exists"
+  
+  if storage_exists "$sid"; then
+    p_ok "Proxmox storage '$sid' already present"
+    return 0
+  fi
+
+  run_cmd "Adding Proxmox LVM storage '$sid' (VG: $vgname)" pvesm add lvm "$sid" --vgname "$vgname" --content "$content" --nodes "$node" --shared 0
+}
+
+ensure_pvesm_lvm_thin_storage() {
+  local sid="$1" vgname="$2" thinpool="$3"
+  local content="images,rootdir"
+  local node
+  node="$(hostname -s)"
+
+  p_info "Ensuring Proxmox LVM-Thin storage '$sid' exists"
+  
+  if storage_exists "$sid"; then
+    p_ok "Proxmox storage '$sid' already present"
+    return 0
+  fi
+
+  run_cmd "Adding Proxmox LVM-Thin storage '$sid' (VG: $vgname, pool: $thinpool)" pvesm add lvmthin "$sid" --vgname "$vgname" --thinpool "$thinpool" --content "$content" --nodes "$node" --shared 0
+}
+
+ensure_pvesm_nfs_storage() {
+  local sid="$1" server="$2" export_path="$3" options="$4"
+  local content="images,iso,vztmpl,backup,snippets,rootdir"
+  local node
+  node="$(hostname -s)"
+
+  p_info "Ensuring Proxmox NFS storage '$sid' exists"
+  
+  if storage_exists "$sid"; then
+    p_ok "Proxmox storage '$sid' already present"
+    return 0
+  fi
+
+  run_cmd "Adding Proxmox NFS storage '$sid' (server: $server, export: $export_path)" \
+    pvesm add nfs "$sid" --server "$server" --export "$export_path" --content "$content" --options "$options" --nodes "$node"
+}
+
 reclaim_system_disk() {
   p_info "System disk reclaim (OS-only): remove local-lvm thinpool, expand /"
 
@@ -646,6 +756,214 @@ validate_device() {
   probe_device_readable "$dev"
 }
 
+provision_disk_dir() {
+  local dev="$1" label="$2"
+  local part
+
+  # Wipe signatures/partition table
+  run_cmd "Wiping filesystem signatures on $dev" wipefs -a "$dev"
+  
+  if ! run_cmd "Zapping GPT/MBR on $dev" sgdisk --zap-all "$dev"; then
+    return 1
+  fi
+
+  # Create partition + label
+  if ! run_cmd "Creating GPT partition on $dev with label $label" sgdisk -n 1:0:0 -t 1:8300 -c 1:"$label" "$dev"; then
+    return 1
+  fi
+
+  # Refresh kernel partition table
+  run_cmd "Refreshing kernel partition table for $dev" partx -u "$dev" || true
+  run_cmd "Waiting for udev to settle" udevadm settle || true
+
+  part="$(get_first_partition "$dev" || true)"
+  [[ -n "$part" ]] || die "Failed to detect new partition on $dev"
+
+  # Format ext4 (lazy init keeps this fast even on huge disks)
+  local mkfs_opts
+  mkfs_opts=("-F" "-L" "$label" "-E" "lazy_itable_init=1,lazy_journal_init=1")
+  if [[ "$QUICK_FORMAT" -eq 1 ]]; then
+    mkfs_opts+=("-m" "0" "-T" "largefile4")
+  fi
+  if ! run_cmd "Formatting $part as ext4 with label $label" mkfs.ext4 "${mkfs_opts[@]}" "$part"; then
+    return 1
+  fi
+
+  ensure_mount "$label" "$part"
+  ensure_pvesm_storage "$label" "/mnt/disks/$label"
+  return 0
+}
+
+provision_disk_lvm() {
+  local dev="$1" label="$2"
+  local part vgname
+
+  # Wipe signatures/partition table
+  run_cmd "Wiping filesystem signatures on $dev" wipefs -a "$dev"
+  
+  if ! run_cmd "Zapping GPT/MBR on $dev" sgdisk --zap-all "$dev"; then
+    return 1
+  fi
+
+  # Create partition (type 8e00 = Linux LVM)
+  if ! run_cmd "Creating GPT partition on $dev for LVM" sgdisk -n 1:0:0 -t 1:8e00 -c 1:"$label" "$dev"; then
+    return 1
+  fi
+
+  # Refresh kernel partition table
+  run_cmd "Refreshing kernel partition table for $dev" partx -u "$dev" || true
+  run_cmd "Waiting for udev to settle" udevadm settle || true
+
+  part="$(get_first_partition "$dev" || true)"
+  [[ -n "$part" ]] || die "Failed to detect new partition on $dev"
+
+  # Create PV
+  if ! run_cmd "Creating LVM physical volume on $part" pvcreate -ff -y "$part"; then
+    return 1
+  fi
+
+  # Create VG with label as VG name
+  vgname="$label"
+  if ! run_cmd "Creating LVM volume group $vgname" vgcreate "$vgname" "$part"; then
+    return 1
+  fi
+
+  ensure_pvesm_lvm_storage "$label" "$vgname"
+  p_ok "Proxmox will create LVs within VG $vgname as needed"
+  return 0
+}
+
+provision_disk_lvm_thin() {
+  local dev="$1" label="$2"
+  local part vgname thinpool
+  local vg_size_kb thin_size_kb meta_size_kb
+
+  # Wipe signatures/partition table
+  run_cmd "Wiping filesystem signatures on $dev" wipefs -a "$dev"
+  
+  if ! run_cmd "Zapping GPT/MBR on $dev" sgdisk --zap-all "$dev"; then
+    return 1
+  fi
+
+  # Create partition (type 8e00 = Linux LVM)
+  if ! run_cmd "Creating GPT partition on $dev for LVM-Thin" sgdisk -n 1:0:0 -t 1:8e00 -c 1:"$label" "$dev"; then
+    return 1
+  fi
+
+  # Refresh kernel partition table
+  run_cmd "Refreshing kernel partition table for $dev" partx -u "$dev" || true
+  run_cmd "Waiting for udev to settle" udevadm settle || true
+
+  part="$(get_first_partition "$dev" || true)"
+  [[ -n "$part" ]] || die "Failed to detect new partition on $dev"
+
+  # Create PV
+  if ! run_cmd "Creating LVM physical volume on $part" pvcreate -ff -y "$part"; then
+    return 1
+  fi
+
+  # Create VG with label as VG name
+  vgname="$label"
+  if ! run_cmd "Creating LVM volume group $vgname" vgcreate "$vgname" "$part"; then
+    return 1
+  fi
+
+  # Create thin pool (use 95% of VG space, leaving some for metadata overhead)
+  # Get VG size in KB
+  vg_size_kb=$(vgs --noheadings --units k --nosuffix -o vg_size "$vgname" | awk '{print int($1)}')
+  thin_size_kb=$(awk "BEGIN {printf \"%.0f\", $vg_size_kb * 0.95}")
+  
+  # Minimum size check (1GB = 1048576 KB)
+  if [[ $thin_size_kb -lt 1048576 ]]; then
+    die "Disk too small for LVM-Thin ($(awk "BEGIN {printf \"%.2f\", $thin_size_kb/1024/1024}") GB). Minimum 1GB required."
+  fi
+  
+  # Use unique pool name based on storage label (e.g., pool-2A from HDD-2A or SSD-2A)
+  local hd_digit letter
+  hd_digit="${label:4:1}"  # Extract digit from label (HDD-2A -> 2)
+  letter="${label: -1}"     # Extract letter from label (HDD-2A -> A)
+  thinpool="pool-${hd_digit}${letter}"
+  
+  if ! run_cmd "Creating LVM thin pool $vgname/$thinpool (${thin_size_kb}K)" \
+    lvcreate -L "${thin_size_kb}K" -T "$vgname/$thinpool"; then
+    return 1
+  fi
+
+  ensure_pvesm_lvm_thin_storage "$label" "$vgname" "$thinpool"
+  p_ok "Proxmox will create thin LVs within $vgname/$thinpool as needed"
+  return 0
+}
+
+provision_nfs() {
+  local server="$1" export_path="$2" options="$3"
+  local sid mnt hd letter
+
+  # Get hostname digit for consistent naming
+  hd="$(get_hostname_digit)"
+  
+  # Find next available NFS letter for this node
+  local used letters
+  used="$(pvesm status 2>/dev/null | awk 'NR>1 && $1 ~ /^NFS-'$hd'[A-Z]$/ {print $1}' || true)"
+  letters=""
+  for L in $used; do
+    letters+="${L: -1}"
+  done
+  
+  for letter in {A..Z}; do
+    if [[ "$letters" != *"$letter"* ]]; then
+      break
+    fi
+  done
+  
+  if [[ -z "$letter" || "$letters" == *"$letter"* ]]; then
+    die "Ran out of letters for NFS-$hd (A..Z exhausted)."
+  fi
+  
+  sid="NFS-${hd}${letter}"
+  mnt="/mnt/nfs/$sid"
+
+  p_info "Provisioning NFS storage: $server:$export_path -> $sid"
+
+  # Verify NFS server is reachable (optional showmount check)
+  if command -v showmount >/dev/null 2>&1; then
+    p_info "Checking NFS server connectivity"
+    if timeout 10 showmount -e "$server" >/dev/null 2>&1; then
+      p_ok "NFS server $server is reachable"
+      # Check if export exists
+      if ! showmount -e "$server" 2>/dev/null | grep -q "^${export_path} "; then
+        p_warn "Export path $export_path not found in showmount output. Will attempt mount anyway."
+      fi
+    else
+      p_warn "Cannot contact NFS server $server (showmount timeout). Will attempt mount anyway."
+    fi
+  else
+    p_warn "showmount not available (install nfs-common). Skipping NFS connectivity check."
+  fi
+
+  # Create mount point
+  run_cmd "Creating NFS mount point: $mnt" mkdir -p "$mnt"
+  ensure_fstab_writable
+
+  # Add to fstab if not present
+  if ! grep -qE "^[[:space:]]*${server}:${export_path}[[:space:]]+${mnt}[[:space:]]" /etc/fstab; then
+    run_cmd "Removing stale /etc/fstab entries for $mnt" sed -i "\|[[:space:]]${mnt}[[:space:]]|d" /etc/fstab
+    run_cmd_str "Adding /etc/fstab entry for NFS" \
+      "printf '%s:%s %s nfs %s 0 0\\n' '$server' '$export_path' '$mnt' '$options' | tee -a /etc/fstab >/dev/null"
+  else
+    p_ok "/etc/fstab entry already present for NFS"
+  fi
+
+  # Mount if not already mounted
+  if ! findmnt -n "$mnt" >/dev/null 2>&1; then
+    run_cmd "Mounting NFS: $mnt" mount "$mnt"
+  else
+    p_ok "Already mounted: $mnt"
+  fi
+
+  ensure_pvesm_nfs_storage "$sid" "$server" "$export_path" "$options"
+  p_ok "Provisioned NFS storage: $sid"
+}
+
 provision_data_disks() {
   local sysdisk="$1"
   local hd="$2"
@@ -691,8 +1009,38 @@ provision_data_disks() {
       # Skip if not using --all or --only (safe default: only provision new devices)
       if [[ $ALL -eq 0 && ${#ONLY_FILTERS[@]} -eq 0 ]]; then
         p_ok "Disk $d already provisioned as $label; skipping (use --all or --only to re-provision)"
-        ensure_mount "$label" "$part"
-        ensure_pvesm_storage "$label" "/mnt/disks/$label"
+        # Heal/ensure configuration based on storage type
+        case "$STORAGE_TYPE" in
+          dir)
+            ensure_mount "$label" "$part"
+            ensure_pvesm_storage "$label" "/mnt/disks/$label"
+            ;;
+          lvm|lvm-thin)
+            # For LVM, just ensure Proxmox storage entry exists
+            # VG should already exist if disk is labeled
+            if vgs "$label" >/dev/null 2>&1; then
+              if [[ "$STORAGE_TYPE" == "lvm-thin" ]]; then
+                # Verify thin pool exists
+                local hd_digit
+                hd_digit="$(get_hostname_digit)"
+                local thinpool="pool-${hd_digit}${label: -1}"
+                if lvs "$label/$thinpool" >/dev/null 2>&1; then
+                  ensure_pvesm_lvm_thin_storage "$label" "$label" "$thinpool"
+                else
+                  p_warn "Disk labeled $label but thin pool $thinpool not found; will re-provision"
+                  # Skip this disk if we're not in --all mode
+                  if [[ $ALL -eq 0 && ${#ONLY_FILTERS[@]} -eq 0 ]]; then
+                    continue
+                  fi
+                fi
+              else
+                ensure_pvesm_lvm_storage "$label" "$label"
+              fi
+            else
+              p_warn "Disk labeled $label but VG not found; will re-provision"
+            fi
+            ;;
+        esac
         continue
       fi
       # With --all or --only, destroy and re-provision
@@ -704,41 +1052,61 @@ provision_data_disks() {
     letter="$(next_letter "$typ" "$hd")"
     label="${typ}-${hd}${letter}"
 
-    p_warn "Disk $d will be DESTROYED and provisioned as $label (GPT, single partition, ext4)"
-
-    # Wipe signatures/partition table
-    run_cmd "Wiping filesystem signatures on $d" wipefs -a "$d"
-    
-    if ! run_cmd "Zapping GPT/MBR on $d" sgdisk --zap-all "$d"; then
-      continue
+    # Check if storage exists and remove if type mismatch
+    if storage_exists "$label"; then
+      local existing_type
+      existing_type="$(pvesm status 2>/dev/null | awk -v sid="$label" 'NR>1 && $1==sid {print $2; exit}')"
+      if [[ -n "$existing_type" ]]; then
+        # Map storage types for comparison
+        local expected_type="$STORAGE_TYPE"
+        [[ "$expected_type" == "lvm-thin" ]] && expected_type="lvmthin"
+        
+        if [[ "$existing_type" != "$expected_type" ]]; then
+          p_warn "Removing old Proxmox storage '$label' (type: $existing_type, will recreate as: $STORAGE_TYPE)"
+          run_cmd "Removing Proxmox storage '$label'" pvesm remove "$label"
+        fi
+      fi
     fi
 
-    # Create partition + label
-    if ! run_cmd "Creating GPT partition on $d with label $label" sgdisk -n 1:0:0 -t 1:8300 -c 1:"$label" "$d"; then
-      continue
-    fi
+    # Storage-type-specific warning
+    case "$STORAGE_TYPE" in
+      dir)
+        p_warn "Disk $d will be DESTROYED and provisioned as $label (dir: GPT, ext4)"
+        ;;
+      lvm)
+        p_warn "Disk $d will be DESTROYED and provisioned as $label (LVM: thick volumes)"
+        ;;
+      lvm-thin)
+        p_warn "Disk $d will be DESTROYED and provisioned as $label (LVM-Thin: thin pool)"
+        ;;
+    esac
 
-    # Refresh kernel partition table without partprobe
-    run_cmd "Refreshing kernel partition table for $d" partx -u "$d" || true
-    run_cmd "Waiting for udev to settle" udevadm settle || true
+    # Call appropriate provisioning function based on storage type
+    case "$STORAGE_TYPE" in
+      dir)
+        if ! provision_disk_dir "$d" "$label"; then
+          p_err "Failed to provision $d as directory storage"
+          continue
+        fi
+        ;;
+      lvm)
+        if ! provision_disk_lvm "$d" "$label"; then
+          p_err "Failed to provision $d as LVM storage"
+          continue
+        fi
+        ;;
+      lvm-thin)
+        if ! provision_disk_lvm_thin "$d" "$label"; then
+          p_err "Failed to provision $d as LVM-Thin storage"
+          continue
+        fi
+        ;;
+      *)
+        die "Unknown storage type: $STORAGE_TYPE"
+        ;;
+    esac
 
-    part="$(get_first_partition "$d" || true)"
-    [[ -n "$part" ]] || die "Failed to detect new partition on $d"
-
-    # Format ext4 (lazy init keeps this fast even on huge disks)
-    local mkfs_opts
-    mkfs_opts=("-F" "-L" "$label" "-E" "lazy_itable_init=1,lazy_journal_init=1")
-    if [[ "$QUICK_FORMAT" -eq 1 ]]; then
-      mkfs_opts+=("-m" "0" "-T" "largefile4")
-    fi
-    if ! run_cmd "Formatting $part as ext4 with label $label" mkfs.ext4 "${mkfs_opts[@]}" "$part"; then
-      continue
-    fi
-
-    ensure_mount "$label" "$part"
-    ensure_pvesm_storage "$label" "/mnt/disks/$label"
-
-    p_ok "Provisioned $d -> $label"
+    p_ok "Provisioned $d -> $label ($STORAGE_TYPE)"
   done
 }
 
@@ -1508,6 +1876,16 @@ cleanup_lvm_on_non_system_disks() {
         continue
       fi
     fi
+    
+    # Explicitly remove thin pools first (cleaner teardown)
+    local thin_pools
+    mapfile -t thin_pools < <(lvs --noheadings -o lv_name,lv_attr "$vg" 2>/dev/null | awk '$2 ~ /^t/ {print $1}' || true)
+    for pool in "${thin_pools[@]}"; do
+      if [[ -n "$pool" ]]; then
+        run_cmd "Removing thin pool $vg/$pool" lvremove -y "$vg/$pool"
+      fi
+    done
+    
     run_cmd "Deactivating VG $vg" vgchange -an "$vg"
     run_cmd "Removing VG $vg" vgremove -y "$vg"
     vgs_removed["$vg"]=1
@@ -1792,7 +2170,23 @@ main() {
   require_cmd partx
   require_cmd udevadm
   require_cmd sgdisk
-  require_cmd mkfs.ext4
+  require_cmd pvesm
+  
+  # Storage-type-specific command checks
+  if [[ "$STORAGE_TYPE" == "dir" ]]; then
+    require_cmd mkfs.ext4
+  fi
+  
+  if [[ "$STORAGE_TYPE" == "lvm" || "$STORAGE_TYPE" == "lvm-thin" ]]; then
+    require_cmd pvcreate
+    require_cmd vgcreate
+    require_cmd lvcreate
+    require_cmd pvs
+    require_cmd vgs
+    require_cmd lvs
+  fi
+  
+  # Always needed for deprovisioning
   require_cmd resize2fs
   require_cmd blockdev
   require_cmd pvs
@@ -1803,7 +2197,7 @@ main() {
   require_cmd vgchange
   require_cmd vgremove
   require_cmd pvremove
-  require_cmd pvesm
+  
   p_ok "All required commands are available"
 
   p_info "Verifying this is a Proxmox node"
@@ -1842,10 +2236,22 @@ main() {
   fi
 
   if [[ "$MODE" == "provision" ]]; then
+    # Handle NFS separately (no disk provisioning)
+    if [[ "$STORAGE_TYPE" == "nfs" ]]; then
+      p_info "Provisioning NFS storage (no local disks)"
+      confirm_destroy
+      provision_nfs "$NFS_SERVER" "$NFS_PATH" "$NFS_OPTIONS"
+      printf '\n'
+      p_ok "Done. Final state:"
+      pvesm status || true
+      exit 0
+    fi
+    
+    # For disk-based storage types
     if [[ "$WHATIF" -eq 1 ]]; then
       whatif_summary_provision "$sysdisk" "$hd"
     fi
-    if [[ "$QUICK_FORMAT" -eq 0 ]]; then
+    if [[ "$STORAGE_TYPE" == "dir" && "$QUICK_FORMAT" -eq 0 ]]; then
       p_warn "Full format enabled: slower but uses default inode density"
     fi
     print_summary_and_plan "$sysdisk" "$hd"
