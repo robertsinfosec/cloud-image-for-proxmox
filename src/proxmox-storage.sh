@@ -1317,12 +1317,170 @@ provision_data_disks() {
 
     p_ok "Provisioned $d -> $label ($STORAGE_TYPE)"
   done
+  
+  # Refresh GRUB device map after changing disk topology
+  refresh_grub_device_map "$FORCE"
 }
 
 remove_fstab_mount() {
   local mnt="$1"
   ensure_fstab_writable
   run_cmd_str "Removing /etc/fstab entries for $mnt" "sed -i '\\|[[:space:]]${mnt}[[:space:]]|d' /etc/fstab"
+}
+
+validate_boot_disk_detection() {
+  local boot_disk="$1"
+  
+  # Must be a block device
+  if [[ ! -b "$boot_disk" ]]; then
+    return 1
+  fi
+  
+  # Must be a base disk, not a partition
+  if [[ "$boot_disk" =~ (p[0-9]+|[0-9]+)$ ]]; then
+    return 1
+  fi
+  
+  # Must have partitions (a boot disk should have a partition table)
+  local part_count
+  part_count=$(lsblk -ln -o TYPE "$boot_disk" 2>/dev/null | grep -c "^part$" || echo "0")
+  if [[ "$part_count" -eq 0 ]]; then
+    return 1
+  fi
+  
+  # Verify root partition is actually on this disk
+  local root_dev
+  root_dev="$(findmnt -no SOURCE / 2>/dev/null)"
+  if [[ -z "$root_dev" ]]; then
+    return 1
+  fi
+  
+  # For LVM, resolve to physical device
+  if [[ "$root_dev" =~ ^/dev/mapper/ ]]; then
+    local vg lv pv
+    vg="${root_dev#/dev/mapper/}"
+    vg="${vg%-*}"
+    lv="${root_dev#/dev/mapper/}"
+    lv="${lv#*-}"
+    
+    # Get PV for this VG
+    pv="$(pvs --noheadings -o pv_name -S vg_name="$vg" 2>/dev/null | awk 'NF{print $1; exit}')"
+    if [[ -z "$pv" ]]; then
+      return 1
+    fi
+    
+    # Strip partition from PV to get disk
+    local pv_disk
+    pv_disk="$(echo "$pv" | sed 's|p\?[0-9]\+$||')"
+    
+    # Verify it matches our boot disk
+    if [[ "$pv_disk" != "$boot_disk" ]]; then
+      return 1
+    fi
+  else
+    # Direct partition - strip partition number and compare
+    local root_disk
+    root_disk="$(echo "$root_dev" | sed 's|p\?[0-9]\+$||')"
+    if [[ "$root_disk" != "$boot_disk" ]]; then
+      return 1
+    fi
+  fi
+  
+  # All checks passed
+  return 0
+}
+
+refresh_grub_device_map() {
+  local force="${1:-0}"
+  
+  # Check if GRUB is installed
+  if ! command -v grub-mkdevicemap &>/dev/null; then
+    return 0
+  fi
+  
+  # Check if this is a GRUB-based system
+  if [[ ! -d /boot/grub ]] && [[ ! -d /boot/efi/EFI ]]; then
+    return 0
+  fi
+  
+  printf '\n'
+  p_info "STEP: Refreshing GRUB device map"
+  p_info "Disk topology has changed - updating bootloader configuration"
+  
+  if [[ "$force" -eq 0 ]]; then
+    printf '\n'
+    p_info "After adding/removing disks, GRUB's device map should be refreshed to prevent"
+    p_info "boot issues during future system updates. This will safely regenerate the device map."
+    printf '\n'
+    read -p "Refresh GRUB now? (recommended) [Y/n]: " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]] && [[ -n $REPLY ]]; then
+      p_warn "Skipping GRUB refresh. Run manually if you encounter boot issues:"
+      printf '%s\n' "    sudo grub-mkdevicemap"
+      printf '%s\n' "    sudo grub-install /dev/YOUR_BOOT_DISK"
+      printf '%s\n' "    sudo update-grub"
+      return 0
+    fi
+  fi
+  
+  # SAFE OPERATION: Always regenerate device map (no destructive operations)
+  if ! run_cmd "Regenerating GRUB device map" grub-mkdevicemap; then
+    p_warn "Failed to regenerate GRUB device map"
+    p_info "Run manually: sudo grub-mkdevicemap"
+    return 1
+  fi
+  
+  # POTENTIALLY DESTRUCTIVE: Only reinstall GRUB if we're 100% certain
+  local boot_disk
+  boot_disk="$(get_system_disk 2>/dev/null)"
+  
+  if [[ -z "$boot_disk" ]]; then
+    printf '\n'
+    p_warn "Could not auto-detect boot disk - skipping GRUB reinstall for safety"
+    p_info "GRUB device map has been refreshed, but you should manually reinstall GRUB:"
+    printf '%s\n' "    sudo grub-install /dev/YOUR_BOOT_DISK"
+    printf '%s\n' "    sudo update-grub"
+    printf '\n'
+    p_info "To find your boot disk, run: findmnt / | tail -1"
+    return 0
+  fi
+  
+  # Validate boot disk detection with multiple safety checks
+  if ! validate_boot_disk_detection "$boot_disk"; then
+    printf '\n'
+    p_warn "Boot disk detection uncertain (detected: $boot_disk) - skipping GRUB reinstall for safety"
+    p_info "GRUB device map has been refreshed, but you should manually verify and reinstall GRUB:"
+    printf '%s\n' "    # Verify your boot disk:"
+    printf '%s\n' "    findmnt / | tail -1"
+    printf '%s\n' "    lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS"
+    printf '\n'
+    printf '%s\n' "    # Then reinstall GRUB to the correct disk:"
+    printf '%s\n' "    sudo grub-install /dev/YOUR_BOOT_DISK"
+    printf '%s\n' "    sudo update-grub"
+    printf '\n'
+    return 0
+  fi
+  
+  # We're confident - proceed with GRUB reinstall
+  p_info "Detected boot disk: $boot_disk (validated)"
+  
+  if ! run_cmd "Reinstalling GRUB to $boot_disk" grub-install "$boot_disk" 2>&1 | grep -v "^Installing for"; then
+    printf '\n'
+    p_err "Failed to reinstall GRUB to $boot_disk"
+    p_warn "GRUB device map was refreshed, but bootloader reinstall failed"
+    p_info "Run manually: sudo grub-install $boot_disk && sudo update-grub"
+    printf '\n'
+    return 1
+  fi
+  
+  if ! run_cmd "Updating GRUB configuration" update-grub 2>&1 | grep -v "^Found"; then
+    p_warn "Failed to update GRUB configuration"
+    p_info "Run manually: sudo update-grub"
+    return 1
+  fi
+  
+  p_ok "GRUB device map refreshed and bootloader reinstalled successfully"
+  return 0
 }
 
 parse_storage_cfg() {
@@ -2367,6 +2525,9 @@ deprovision_all() {
   fi
 
   wipe_disks "$sysdisk" "${disks_to_wipe[@]}"
+  
+  # Refresh GRUB device map after changing disk topology
+  refresh_grub_device_map "$FORCE"
 }
 
 print_summary_and_plan() {

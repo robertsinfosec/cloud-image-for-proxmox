@@ -684,6 +684,74 @@ This helps you:
 - Identify which VMs need migration before major changes
 - Understand what will be affected by rename operations
 
+## System Maintenance
+
+After provisioning or deprovisioning disks, the script refreshes GRUB's device map to prevent boot issues during future system updates.
+
+**What happens:**
+1. **Device map refresh (always safe):** Regenerates `/boot/grub/device.map` to reflect current disk topology
+2. **Bootloader reinstall (only if certain):** If boot disk is confidently detected and validated, reinstalls GRUB and updates configuration
+
+**Why this matters:**
+When you add or remove disks, GRUB's cached device map can become stale. During routine system updates (kernel upgrades, etc.), the package manager may fail to reinstall GRUB, which can prevent your system from booting.
+
+> [!IMPORTANT]
+> **Safety first:** The script only reinstalls GRUB if it can validate the boot disk with multiple checks:
+> - Boot disk is a valid block device
+> - Boot disk has partitions
+> - Root filesystem is confirmed to be on that disk
+> 
+> If validation fails or boot disk detection is uncertain, the script **skips GRUB reinstall** and shows manual instructions instead.
+
+**Normal successful output:**
+```bash
+[*] Regenerating GRUB device map
+[*] Detected boot disk: /dev/nvme0n1 (validated)
+[*] Reinstalling GRUB to /dev/nvme0n1
+[*] Updating GRUB configuration
+[+] GRUB device map refreshed and bootloader reinstalled successfully
+```
+
+**If boot disk can't be validated:**
+```bash
+[*] Regenerating GRUB device map
+[!] Boot disk detection uncertain (detected: /dev/sda) - skipping GRUB reinstall for safety
+[*] GRUB device map has been refreshed, but you should manually verify and reinstall GRUB:
+    # Verify your boot disk:
+    findmnt / | tail -1
+    lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS
+    
+    # Then reinstall GRUB to the correct disk:
+    sudo grub-install /dev/YOUR_BOOT_DISK
+    sudo update-grub
+```
+
+> [!NOTE]
+> In interactive mode, you're prompted before GRUB refresh. In `--force` mode, device map refresh happens automatically, but GRUB reinstall still requires confident boot disk detection.
+
+**Manual GRUB maintenance:**
+If you skip the automatic refresh or need to run it later:
+```bash
+sudo grub-mkdevicemap
+sudo grub-install /dev/YOUR_BOOT_DISK
+sudo update-grub
+```
+
+**Troubleshooting GRUB failures:**
+If you encounter `disk not found` errors during system updates:
+```bash
+# Remove stale device map
+sudo rm -f /boot/grub/device.map
+
+# Regenerate and reinstall
+sudo grub-mkdevicemap
+sudo grub-install /dev/nvme0n1  # Replace with your boot disk
+sudo update-grub
+
+# Verify (UEFI systems)
+sudo efibootmgr -v
+```
+
 ## USB / enclosure caveats
 
 If a disk is behind a USB bridge, transient disconnects or UAS issues can cause I/O failures.
