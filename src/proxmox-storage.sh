@@ -1638,6 +1638,13 @@ show_storage_mapping() {
   # Track whether we display any mappings
   local found_mappings=0
   
+  # Check if there are any storage entries to display
+  if [[ ${#storage_types[@]} -eq 0 ]]; then
+    echo "  No custom storage configured."
+    echo ""
+    return
+  fi
+  
   # Sort storage IDs alphabetically for consistent display
   mapfile -t sorted_sids < <(printf '%s\n' "${!storage_types[@]}" | sort)
   
