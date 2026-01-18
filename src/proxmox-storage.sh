@@ -2128,9 +2128,16 @@ cleanup_mdraid_on_non_system_disks() {
   done
 }
 
-wipe_non_system_disks() {
+wipe_disks() {
   local sysdisk="$1"
-  mapfile -t disks < <(list_target_disks "$sysdisk")
+  shift
+  local disks=("$@")
+  
+  if [[ ${#disks[@]} -eq 0 ]]; then
+    p_ok "No disks to wipe"
+    return 0
+  fi
+  
   for d in "${disks[@]}"; do
     p_warn "Disk $d will be wiped to raw state"
 
@@ -2182,6 +2189,11 @@ deprovision_all() {
     printf '%s\n' "    - Wipe all non-system disks to raw state"
   fi
 
+  # Build list of target disks BEFORE removing LVM/ZFS structures
+  # (so we can still resolve storage names to disks via VG lookups)
+  local disks_to_wipe=()
+  mapfile -t disks_to_wipe < <(list_target_disks "$sysdisk")
+
   deprovision_storage_entries "$sysdisk"
   cleanup_lvm_on_non_system_disks "$sysdisk"
   cleanup_zfs_on_non_system_disks "$sysdisk"
@@ -2197,7 +2209,7 @@ deprovision_all() {
     fi
   fi
 
-  wipe_non_system_disks "$sysdisk"
+  wipe_disks "$sysdisk" "${disks_to_wipe[@]}"
 }
 
 print_summary_and_plan() {
