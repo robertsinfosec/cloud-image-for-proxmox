@@ -414,10 +414,18 @@ get_first_partition() {
 
 disk_is_rotational() {
   local dev="$1" base
+  base="$(basename "$dev")"
+  
+  # NVMe drives are always non-rotational
+  if [[ "$base" =~ ^nvme[0-9]+n[0-9]+$ ]]; then
+    echo "0"
+    return 0
+  fi
+  
   if command -v smartctl >/dev/null 2>&1; then
     local rotation
     rotation="$(smart_rotation "$dev")"
-    if [[ "$rotation" == "SSD" ]]; then
+    if [[ "$rotation" == "SSD" || "$rotation" == "NVMe" ]]; then
       echo "0"
       return 0
     elif echo "$rotation" | grep -qi 'rpm'; then
@@ -425,7 +433,7 @@ disk_is_rotational() {
       return 0
     fi
   fi
-  base="$(basename "$dev")"
+  
   if [[ -r "/sys/block/$base/queue/rotational" ]]; then
     cat "/sys/block/$base/queue/rotational" 2>/dev/null || echo "unknown"
   else
@@ -1088,14 +1096,20 @@ provision_data_disks() {
 
     p_info "Processing disk: $d"
     
-    local rot typ
+    local rot typ base
     rot="$(disk_is_rotational "$d")"
+    base="$(basename "$d")"
+    
+    # Determine storage type prefix
     if [[ "$rot" == "1" ]]; then
       typ="HDD"
+    elif [[ "$base" =~ ^nvme[0-9]+n[0-9]+$ ]]; then
+      # NVMe drives use SSD prefix for storage naming
+      typ="SSD"
     else
       typ="SSD"
     fi
-    p_ok "Disk type determined: $typ (rotational=$rot)"
+    p_ok "Disk type determined: $typ (rotational=$rot)"  
 
     local part existing_label expected_pattern label
     part="$(get_first_partition "$d" || true)"
@@ -1388,7 +1402,15 @@ smart_first_line() {
 }
 
 smart_rotation() {
-  local dev="$1" line value
+  local dev="$1" base line value
+  base="$(basename "$dev")"
+  
+  # NVMe drives - check device name pattern
+  if [[ "$base" =~ ^nvme[0-9]+n[0-9]+$ ]]; then
+    printf '%s' "NVMe"
+    return 0
+  fi
+  
   line="$(smart_first_line "$dev" "Rotation Rate")"
   if [[ -n "$line" ]]; then
     value="${line#*:}"
@@ -1506,7 +1528,8 @@ show_available_storage() {
         mount_device=$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || echo "")
         
         if [[ -n "$mount_device" ]]; then
-          base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
+          # Handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
+          base_device=$(echo "$mount_device" | sed 's|/dev/||; s|p\?[0-9]\+$||')
           if [[ -n "$base_device" ]]; then
             device_storage_map["$base_device"]="$sid"
           fi
@@ -1518,7 +1541,8 @@ show_available_storage() {
         local pv_device base_device
         pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$sid" '$2==vg {print $1; exit}')
         if [[ -n "$pv_device" ]]; then
-          base_device=$(echo "$pv_device" | sed 's|/dev/||; s|[0-9]*$||')
+          # Handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
+          base_device=$(echo "$pv_device" | sed 's|/dev/||; s|p\?[0-9]\+$||')
           if [[ -n "$base_device" ]]; then
             device_storage_map["$base_device"]="$sid"
           fi
@@ -1537,9 +1561,9 @@ show_available_storage() {
   echo ""
   
   if [[ "$EXTENDED" -eq 1 ]]; then
-    printf '%-14s %-8s %-30s %-12s %-8s %-8s %-10s %-15s\n' "Device" "Size" "Model" "Media" "Health" "Temp" "Life" "Proxmox Storage"
+    printf '%-15s %-9s %-30s %-8s %-8s %-8s %-10s %-15s\n' "Device" "Size" "Model" "Media" "Health" "Temp" "Life" "Proxmox Storage"
   else
-    printf '%-14s %-8s %-30s %-20s %-15s\n' "Device" "Size" "Model" "Media" "Proxmox Storage"
+    printf '%-15s %-9s %-30s %-8s %-15s\n' "Device" "Size" "Model" "Media" "Proxmox Storage"
   fi
 
   mapfile -t disks < <(lsblk -dn -o NAME,TYPE | awk '$2=="disk"{print $1}')
@@ -1567,9 +1591,9 @@ show_available_storage() {
       health="$(smart_health "$dev")"
       temp="$(smart_temp "$dev")"
       life="$(smart_life_remaining "$dev")"
-      printf '%-14s %-8s %-30s %-12s %-8s %-8s %-10s %-15s\n' "$dev" "$size" "$model" "$rotation" "$health" "$temp" "$life" "$storage_status"
+      printf '%-15s %-9s %-30s %-8s %-8s %-8s %-10s %-15s\n' "$dev" "$size" "$model" "$rotation" "$health" "$temp" "$life" "$storage_status"
     else
-      printf '%-14s %-8s %-30s %-20s %-15s\n' "$dev" "$size" "$model" "$rotation" "$storage_status"
+      printf '%-15s %-9s %-30s %-8s %-15s\n' "$dev" "$size" "$model" "$rotation" "$storage_status"
     fi
   done
 }
@@ -1698,7 +1722,8 @@ show_available_for_provisioning() {
         mount_device=$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || echo "")
         
         if [[ -n "$mount_device" ]]; then
-          base_device=$(echo "$mount_device" | sed 's|/dev/||; s|[0-9]*$||')
+          # Handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
+          base_device=$(echo "$mount_device" | sed 's|/dev/||; s|p\?[0-9]\+$||')
           if [[ -n "$base_device" ]]; then
             device_storage_map["$base_device"]="$sid"
           fi
@@ -1710,7 +1735,8 @@ show_available_for_provisioning() {
         local pv_device base_device
         pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$sid" '$2==vg {print $1; exit}')
         if [[ -n "$pv_device" ]]; then
-          base_device=$(echo "$pv_device" | sed 's|/dev/||; s|[0-9]*$||')
+          # Handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
+          base_device=$(echo "$pv_device" | sed 's|/dev/||; s|p\?[0-9]\+$||')
           if [[ -n "$base_device" ]]; then
             device_storage_map["$base_device"]="$sid"
           fi
@@ -1802,10 +1828,15 @@ whatif_summary_provision() {
   fi
 
   for d in "${disks[@]}"; do
-    local rot typ part existing_label expected_pattern label
+    local rot typ part existing_label expected_pattern label base
     rot="$(disk_is_rotational "$d")"
+    base="$(basename "$d")"
+    
     if [[ "$rot" == "1" ]]; then
       typ="HDD"
+    elif [[ "$base" =~ ^nvme[0-9]+n[0-9]+$ ]]; then
+      # NVMe drives use SSD prefix for storage naming
+      typ="SSD"
     else
       typ="SSD"
     fi
