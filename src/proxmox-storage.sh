@@ -1537,9 +1537,9 @@ show_available_storage() {
   echo ""
   
   if [[ "$EXTENDED" -eq 1 ]]; then
-    printf '%-10s %-8s %-30s %-12s %-8s %-8s %-10s %-15s\n' "Device" "Size" "Model" "Media" "Health" "Temp" "Life" "Proxmox Storage"
+    printf '%-14s %-8s %-30s %-12s %-8s %-8s %-10s %-15s\n' "Device" "Size" "Model" "Media" "Health" "Temp" "Life" "Proxmox Storage"
   else
-    printf '%-10s %-8s %-30s %-20s %-15s\n' "Device" "Size" "Model" "Media" "Proxmox Storage"
+    printf '%-14s %-8s %-30s %-20s %-15s\n' "Device" "Size" "Model" "Media" "Proxmox Storage"
   fi
 
   mapfile -t disks < <(lsblk -dn -o NAME,TYPE | awk '$2=="disk"{print $1}')
@@ -1567,9 +1567,9 @@ show_available_storage() {
       health="$(smart_health "$dev")"
       temp="$(smart_temp "$dev")"
       life="$(smart_life_remaining "$dev")"
-      printf '%-10s %-8s %-30s %-12s %-8s %-8s %-10s %-15s\n' "$dev" "$size" "$model" "$rotation" "$health" "$temp" "$life" "$storage_status"
+      printf '%-14s %-8s %-30s %-12s %-8s %-8s %-10s %-15s\n' "$dev" "$size" "$model" "$rotation" "$health" "$temp" "$life" "$storage_status"
     else
-      printf '%-10s %-8s %-30s %-20s %-15s\n' "$dev" "$size" "$model" "$rotation" "$storage_status"
+      printf '%-14s %-8s %-30s %-20s %-15s\n' "$dev" "$size" "$model" "$rotation" "$storage_status"
     fi
   done
 }
