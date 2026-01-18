@@ -374,13 +374,19 @@ hostname_digit() {
 
 # Determine base disk device backing /
 get_system_disk() {
-  local src pv disk
+  local src pv disk vg
   src="$(findmnt -n -o SOURCE /)"
 
   # Default Proxmox ISO install puts / on LVM (/dev/mapper/pve-root).
   if [[ "$src" == /dev/mapper/* || "$src" == /dev/dm-* ]]; then
-    pv="$(pvs --noheadings -o pv_name 2>/dev/null | awk 'NF{print $1; exit 0}')"
-    [[ -n "$pv" ]] || die "Unable to determine PV device backing root."
+    # Get VG name from the root LV
+    vg="$(lvs --noheadings -o vg_name "$src" 2>/dev/null | awk 'NF{print $1; exit 0}')"
+    [[ -n "$vg" ]] || die "Unable to determine VG for root."
+    
+    # Find PV that's part of this VG
+    pv="$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$vg" '$2==vg {print $1; exit 0}')"
+    [[ -n "$pv" ]] || die "Unable to determine PV device backing root VG '$vg'."
+    
     disk="$(lsblk -no PKNAME "$pv" | awk 'NF{print $1; exit 0}')"
     [[ -n "$disk" ]] || die "Unable to determine base disk for PV '$pv'."
     printf '%s' "/dev/$disk"
@@ -1038,16 +1044,28 @@ provision_data_disks() {
                   ensure_pvesm_lvm_thin_storage "$label" "$label" "$thinpool"
                 else
                   p_warn "Disk labeled $label but thin pool $thinpool not found; will re-provision"
-                  # Skip this disk if we're not in --all mode
-                  if [[ $ALL -eq 0 && ${#ONLY_FILTERS[@]} -eq 0 ]]; then
-                    continue
-                  fi
+                  # Don't continue - fall through to re-provision below
                 fi
               else
                 ensure_pvesm_lvm_storage "$label" "$label"
               fi
             else
               p_warn "Disk labeled $label but VG not found; will re-provision"
+              # Don't continue - fall through to re-provision below
+            fi
+            
+            # Only continue (skip re-provisioning) if we successfully healed
+            if vgs "$label" >/dev/null 2>&1; then
+              if [[ "$STORAGE_TYPE" == "lvm-thin" ]]; then
+                local hd_digit
+                hd_digit="$(get_hostname_digit)"
+                local thinpool="pool-${hd_digit}${label: -1}"
+                if lvs "$label/$thinpool" >/dev/null 2>&1; then
+                  continue
+                fi
+              else
+                continue
+              fi
             fi
             ;;
         esac
