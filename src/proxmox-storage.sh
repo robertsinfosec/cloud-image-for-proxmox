@@ -430,7 +430,17 @@ disk_is_rotational() {
 next_letter() {
   local typ="$1" hd="$2"
   local used letters
+  
+  # Check partition labels (for dir storage)
   used="$(blkid -o value -s LABEL 2>/dev/null | grep -E "^${typ}-${hd}[A-Z]$" || true)"
+  
+  # Also check LVM VG names (for lvm/lvm-thin storage)
+  local vg_names
+  vg_names="$(vgs --noheadings -o vg_name 2>/dev/null | grep -E "^${typ}-${hd}[A-Z]$" || true)"
+  
+  # Combine both sources
+  used="${used}${vg_names}"
+  
   letters=""
   for L in $used; do
     letters+="${L: -1}"
@@ -503,7 +513,7 @@ ensure_pvesm_lvm_storage() {
     return 0
   fi
 
-  run_cmd "Adding Proxmox LVM storage '$sid' (VG: $vgname)" pvesm add lvm "$sid" --vgname "$vgname" --content "$content" --nodes "$node" --shared 0
+  run_cmd "Adding Proxmox LVM storage '$sid' (VG: $vgname)" pvesm add lvm "$sid" --vgname "$vgname" --content "$content" --nodes "$node"
 }
 
 ensure_pvesm_lvm_thin_storage() {
@@ -519,7 +529,7 @@ ensure_pvesm_lvm_thin_storage() {
     return 0
   fi
 
-  run_cmd "Adding Proxmox LVM-Thin storage '$sid' (VG: $vgname, pool: $thinpool)" pvesm add lvmthin "$sid" --vgname "$vgname" --thinpool "$thinpool" --content "$content" --nodes "$node" --shared 0
+  run_cmd "Adding Proxmox LVM-Thin storage '$sid' (VG: $vgname, pool: $thinpool)" pvesm add lvmthin "$sid" --vgname "$vgname" --thinpool "$thinpool" --content "$content" --nodes "$node"
 }
 
 ensure_pvesm_nfs_storage() {
