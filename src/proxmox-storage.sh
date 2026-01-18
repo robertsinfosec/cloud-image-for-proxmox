@@ -1638,8 +1638,9 @@ show_storage_mapping() {
   # Track whether we display any mappings
   local found_mappings=0
   
-  # Check if there are any storage entries to display (handle empty array with set -u)
-  if [[ ${#storage_types[@]:-0} -eq 0 ]]; then
+  # Check if there are any storage entries to display (safe for set -u)
+  local storage_count="${!storage_types[*]}"
+  if [[ -z "$storage_count" ]]; then
     echo "  No custom storage configured."
     echo ""
     return
