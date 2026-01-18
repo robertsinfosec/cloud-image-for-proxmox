@@ -14,6 +14,7 @@ p_info()  { echo -e "${C_INFO}[*]${NC} $*"; }
 p_ok()    { echo -e "${C_OK}[+]${NC} $*"; }
 p_warn()  { echo -e "${C_WARN}[!]${NC} $*" >&2; }
 p_err()   { echo -e "${C_ERR}[-]${NC} $*" >&2; }
+p_step()  { echo -e "${C_INFO}[*] STEP $1:${NC} ${*:2}"; }
 
 # Legacy aliases for compatibility
 log()  { p_info "$@"; }
@@ -21,6 +22,53 @@ ok()   { p_ok "$@"; }
 warn() { p_warn "$@"; }
 err()  { p_err "ERROR: $*"; }
 die()  { err "$*"; exit 1; }
+
+show_mode_banner() {
+  local mode="$1"
+  echo ""
+  echo "╔════════════════════════════════════════════════════════════════════════════════╗"
+  case "$mode" in
+    provision)
+      echo -e "║ ${C_OK}MODE: PROVISION STORAGE${NC}"
+      echo "╠════════════════════════════════════════════════════════════════════════════════╣"
+      echo "║ This will create new Proxmox storage on available disks."
+      if [[ $ALL -eq 1 ]]; then
+        echo -e "║ ${C_WARN}WARNING: --all specified - will DESTROY and re-provision ALL storage!${NC}"
+      fi
+      echo "║ Storage Type: $STORAGE_TYPE"
+      if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+        echo "║ Filtered to: ${ONLY_FILTERS[*]}"
+      else
+        echo "║ Target: All available/unprovisioned disks"
+      fi
+      ;;
+    deprovision)
+      echo -e "║ ${C_ERR}MODE: DEPROVISION STORAGE${NC}"
+      echo "╠════════════════════════════════════════════════════════════════════════════════╣"
+      echo -e "║ ${C_ERR}WARNING: This will DESTROY storage and wipe disks!${NC}"
+      if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+        echo "║ Filtered to: ${ONLY_FILTERS[*]}"
+      else
+        echo "║ Target: ALL non-system storage"
+      fi
+      ;;
+    status)
+      echo "║ MODE: STATUS REPORT"
+      ;;
+    rename)
+      echo "║ MODE: RENAME STORAGE"
+      echo "╠════════════════════════════════════════════════════════════════════════════════╣"
+      echo "║ Renaming: $OLD_STORAGE_NAME -> $NEW_STORAGE_NAME"
+      ;;
+    list-usage)
+      echo "║ MODE: LIST STORAGE USAGE"
+      echo "╠════════════════════════════════════════════════════════════════════════════════╣"
+      echo "║ Storage: $STORAGE_NAME"
+      ;;
+  esac
+  echo "╚════════════════════════════════════════════════════════════════════════════════╝"
+  echo ""
+}
 
 MODE=""
 FORCE=0
@@ -207,9 +255,22 @@ parse_args() {
     usage
     exit 1
   fi
+  
+  # Validate argument combinations
+  if [[ "$MODE" == "deprovision" || "$MODE" == "status" || "$MODE" == "rename" || "$MODE" == "list-usage" ]]; then
+    if [[ "$STORAGE_TYPE" != "dir" ]]; then
+      die "--type is only valid with --provision (not with --$MODE)"
+    fi
+    if [[ -n "$NFS_SERVER" || -n "$NFS_PATH" ]]; then
+      die "NFS options (--nfs-server, --nfs-path) are only valid with --provision"
+    fi
+    if [[ $ALL -eq 1 ]]; then
+      die "--all is only valid with --provision"
+    fi
+  fi
 
   # Validate NFS requirements
-  if [[ "$STORAGE_TYPE" == "nfs" ]]; then
+  if [[ "$MODE" == "provision" && "$STORAGE_TYPE" == "nfs" ]]; then
     if [[ -z "$NFS_SERVER" ]]; then
       die "--type nfs requires --nfs-server\n       Example: --type nfs --nfs-server 192.168.1.100 --nfs-path /export/storage"
     fi
@@ -2356,7 +2417,11 @@ print_summary_and_plan() {
 
 main() {
   parse_args "$@"
+  
+  show_mode_banner "$MODE"
   log_context
+  
+  p_step 1 "Checking root privileges"
   require_root
 
   if [[ "$MODE" == "status" ]]; then
@@ -2389,7 +2454,7 @@ main() {
   fi
 
   # Core prerequisites with actionable install hints
-  p_info "Checking for required commands"
+  p_step 2 "Checking for required commands"
   require_cmd findmnt
   require_cmd lsblk
   require_cmd blkid
@@ -2427,7 +2492,7 @@ main() {
   
   p_ok "All required commands are available"
 
-  p_info "Verifying this is a Proxmox node"
+  p_step 3 "Verifying this is a Proxmox node"
   if is_proxmox; then
     p_ok "Proxmox node verified (pvesm and /etc/pve found)"
   else
@@ -2435,7 +2500,7 @@ main() {
   fi
 
   local hd sysdisk
-  p_info "Determining hostname digit and system disk"
+  p_step 4 "Determining hostname digit and system disk"
   hd="$(get_hostname_digit)"
   sysdisk="$(get_system_disk)"
   p_ok "Hostname digit: $hd"
