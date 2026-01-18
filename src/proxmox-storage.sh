@@ -671,6 +671,7 @@ matches_any_filter() {
 
 validate_storage_filters() {
   local mode="$1"  # "provision" or "deprovision"
+  local sysdisk="${2:-}"
   
   # No filters = no validation needed
   if [[ ${#ONLY_FILTERS[@]} -eq 0 ]]; then
@@ -690,10 +691,44 @@ validate_storage_filters() {
         fi
       done < <(parse_storage_cfg)
       
-      if [[ "$mode" == "deprovision" && "$exists" -eq 0 ]]; then
-        die "Storage '$filter' does not exist in Proxmox.\n       Cannot deprovision non-existent storage.\n       Use 'pvesm status' to list existing storage, or use a device path like '--only /dev/sde'"
-      elif [[ "$mode" == "provision" && "$exists" -eq 1 ]]; then
-        die "Storage '$filter' already exists in Proxmox.\n       Cannot provision over existing storage.\n       Either deprovision it first, or use a device path like '--only /dev/sde'"
+      if [[ "$mode" == "deprovision" ]]; then
+        if [[ "$exists" -eq 0 ]]; then
+          die "Storage '$filter' does not exist in Proxmox.\n       Cannot deprovision non-existent storage.\n       Use 'pvesm status' to list existing storage, or use a device path like '--only /dev/sde'"
+        fi
+      elif [[ "$mode" == "provision" ]]; then
+        # For provision, storage name is only allowed if we can map it to a disk
+        # Check 1: Does it already exist? (error)
+        if [[ "$exists" -eq 1 ]]; then
+          die "Storage '$filter' already exists in Proxmox.\n       Cannot provision over existing storage.\n       Either deprovision it first, or use a device path like '--only /dev/sde'"
+        fi
+        
+        # Check 2: Can we map it to a disk? (via VG or partition label)
+        local can_map=0
+        
+        # Try VG lookup
+        if pvs --noheadings -o vg_name 2>/dev/null | grep -qx "[[:space:]]*${filter}"; then
+          can_map=1
+        else
+          # Try partition label lookup on all non-system disks
+          if [[ -n "$sysdisk" ]]; then
+            mapfile -t all_disks < <(list_non_system_disks "$sysdisk")
+            for disk in "${all_disks[@]}"; do
+              local part label
+              part="$(get_first_partition "$disk" || true)"
+              if [[ -n "$part" ]]; then
+                label="$(blkid -o value -s LABEL "$part" 2>/dev/null || true)"
+                if [[ "$label" == "$filter" ]]; then
+                  can_map=1
+                  break
+                fi
+              fi
+            done
+          fi
+        fi
+        
+        if [[ "$can_map" -eq 0 ]]; then
+          die "Storage name '$filter' cannot be mapped to any disk.\n       The storage doesn't exist and no disk has VG or label '$filter'.\n       For provisioning, use a device path instead: '--only /dev/sdc'\n       (Device paths are required when creating new storage)"
+        fi
       fi
     fi
   done
@@ -1035,7 +1070,7 @@ provision_data_disks() {
   local hd="$2"
 
   # Validate storage name filters before proceeding
-  validate_storage_filters "provision"
+  validate_storage_filters "provision" "$sysdisk"
 
   if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
     p_info "Provisioning filtered disk(s) as Proxmox storage: filters=[${ONLY_FILTERS[*]}] sysdisk=$sysdisk hostdigit=$hd"
