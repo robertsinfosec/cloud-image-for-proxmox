@@ -1169,3 +1169,167 @@ sr0           1024M rom
 
 > [!WARNING]
 > This script is **destructive** by design. Use `--whatif` to preview changes and `--force` only when you are certain the node can be wiped.
+
+---
+
+## Understanding LVM and LVM-Thin Storage Structure
+
+When working with LVM and LVM-Thin storage types, it's helpful to understand the layered structure the script creates. This section explains what you're seeing in `--status` output and clarifies the relationship between storage names, volume groups, and thin pools.
+
+### The Storage Hierarchy
+
+Each Proxmox storage object maps to a complete, isolated LVM structure:
+
+```
+Physical Disk: /dev/sdc (1.8T rotational disk)
+    ↓
+Partition: /dev/sdc1 (single GPT partition, 100% of disk)
+    ↓
+Physical Volume (PV): /dev/sdc1 (LVM physical volume)
+    ↓
+Volume Group (VG): HDD-1B (matches storage name exactly)
+    ↓
+Thin Pool (LV): pool-1B (for LVM-Thin only, one per VG)
+    ↓
+Thin Volumes: vm-100-disk-0, vm-101-disk-0, etc. (created by Proxmox as needed)
+```
+
+### What You See in `--status` Output
+
+Here's a real example showing all three storage types side-by-side:
+
+```
+╔════════════════════════════════════════════════════════════════════════════════╗
+║ PROXMOX STORAGE → DEVICE MAPPING
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+  HDD-1C (lvm) → /dev/sde (13.6T, H/W RAID5)
+    VG: HDD-1C
+    PV: /dev/sde1
+
+  HDD-1B (lvmthin) → /dev/sdc ( 1.8T, ST2000LX001-1RG174)
+    VG: HDD-1B
+    PV: /dev/sdc1
+    Thin Pool: pool-1B (Used: 0.0%)
+
+  HDD-1A (lvmthin) → /dev/sdd ( 1.8T, ST2000LX001-1RG174)
+    VG: HDD-1A
+    PV: /dev/sdd1
+    Thin Pool: pool-1A (Used: 0.0%)
+
+  SSD-1A (dir) → /dev/sdb (476.9G, Timetec 30TT253X2-512G)
+    Mount: /mnt/disks/SSD-1A
+    Device: /dev/sdb1
+```
+
+**Breaking this down:**
+
+- **HDD-1C (lvm)** - Standard LVM storage
+  - Uses Volume Group `HDD-1C` on Physical Volume `/dev/sde1`
+  - No thin pool (thick provisioning only)
+  - VM disks are created as standard Logical Volumes
+
+- **HDD-1B (lvmthin)** - LVM-Thin storage
+  - Uses Volume Group `HDD-1B` on Physical Volume `/dev/sdc1`
+  - Contains thin pool `pool-1B` (95% of VG space)
+  - VM disks are created as thin volumes inside `pool-1B`
+  - Enables snapshots and thin provisioning
+
+- **HDD-1A (lvmthin)** - Another LVM-Thin storage (same type, different disk)
+  - Uses Volume Group `HDD-1A` on Physical Volume `/dev/sdd1`
+  - Contains thin pool `pool-1A` (95% of VG space)
+  - **Completely isolated from HDD-1B** - different disk, different VG, different pool
+
+- **SSD-1A (dir)** - Directory storage
+  - Uses ext4 filesystem on `/dev/sdb1`
+  - Mounted at `/mnt/disks/SSD-1A`
+  - No LVM involved
+
+### Key Principles: Isolation and Simplicity
+
+> [!IMPORTANT]
+> **One Disk = One VG = One Thin Pool (if LVM-Thin)**
+>
+> This script enforces a strict 1:1:1 mapping:
+> - Each disk gets exactly one Volume Group
+> - Each VG contains exactly one thin pool (for LVM-Thin type)
+> - Deprovisioning removes the entire VG, affecting only that one disk
+
+**Why you might see similar pool names:**
+
+```
+SSD-1A → VG: SSD-1A → Thin Pool: pool-1A
+HDD-1A → VG: HDD-1A → Thin Pool: pool-1A
+```
+
+Notice both have `pool-1A`? **This is intentional and completely safe:**
+
+- The pools exist in **different Volume Groups** (`SSD-1A` vs `HDD-1A`)
+- They are **completely isolated** from each other
+- The naming pattern `pool-1A` matches the storage suffix for clarity
+- Think of it like having `Documents` folders on two different computers
+
+> [!NOTE]
+> **Thin pool names are for debugging clarity only.** You'll never directly interact with thin pools - Proxmox creates and manages thin volumes automatically. The matching names help when troubleshooting LVM issues.
+
+### What's Out of Scope
+
+This script is designed for **simple, safe, automated provisioning**. Advanced LVM configurations are intentionally not supported:
+
+**We DON'T support:**
+- Multiple thin pools in one VG (e.g., `fast-pool`, `warm-pool`, `archive-pool`)
+- Multiple Physical Volumes in one VG (spanning disks)
+- Custom chunk sizes or pool tuning
+- RAID configurations within LVM (use hardware RAID or ZFS instead)
+- Complex volume hierarchies
+
+**If you need advanced LVM features:**
+- You probably don't need this script
+- Manual LVM configuration gives you complete control
+- This script is optimized for "one disk, one purpose" scenarios
+
+### Verifying Isolation
+
+You can verify the 1:1:1 mapping with standard LVM commands:
+
+```bash
+# Show which disks belong to which Volume Groups
+pvs
+  PV         VG     Fmt  Attr PSize    PFree  
+  /dev/sdb1  SSD-1A lvm2 a--  <476.94g <23.62g
+  /dev/sdc1  HDD-1B lvm2 a--    <1.82t <92.93g
+  /dev/sdd1  HDD-1A lvm2 a--    <1.82t <92.93g
+  /dev/sde1  HDD-1C lvm2 a--    13.64t  13.64t
+
+# Show thin pools (only for lvmthin storage types)
+lvs
+  LV      VG     Attr       LSize   Pool Origin Data%
+  pool-1A SSD-1A twi-a-tz-- 453.09g             0.00
+  pool-1A HDD-1A twi-a-tz--  <1.73t             0.00
+  pool-1B HDD-1B twi-a-tz--  <1.73t             0.00
+```
+
+Each VG has exactly one PV (Physical Volume), confirming complete isolation.
+
+### Why This Matters for Deprovisioning
+
+When you deprovision storage, the script removes the **entire Volume Group**:
+
+```bash
+# Deprovisioning HDD-1A removes:
+pvesm remove HDD-1A          # Proxmox storage entry
+lvremove -y HDD-1A/pool-1A   # Thin pool (if lvmthin)
+vgremove -y HDD-1A           # Entire Volume Group
+pvremove /dev/sdd1           # Physical volume
+wipefs -a /dev/sdd           # Disk signatures
+```
+
+Because each storage has its own isolated VG:
+- **Removing HDD-1A cannot affect HDD-1B** (different VGs)
+- **Removing HDD-1A cannot affect SSD-1A** (different VGs)
+- **Each deprovision operation affects exactly one disk**
+
+> [!TIP]
+> If you're unsure which disk will be affected, use `--status` to see the mapping before running `--deprovision`.
+
+---
