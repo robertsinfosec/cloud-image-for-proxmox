@@ -233,9 +233,44 @@ check_yq() {
 
 check_libguestfs() {
     if ! command -v virt-customize >/dev/null 2>&1; then
-        echo "ERROR: 'virt-customize' is required (libguestfs-tools)."
-        echo "Install: apt-get install libguestfs-tools"
-        exit 1
+        if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
+            echo "ERROR: 'virt-customize' is required (libguestfs-tools)."
+            echo "libguestfs-tools provides image manipulation capabilities."
+            echo "Install: apt-get install libguestfs-tools"
+            exit 1
+        fi
+
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════════════════════"
+        echo "  libguestfs-tools Required for VM Template Creation"
+        echo "═══════════════════════════════════════════════════════════════════════════════"
+        echo ""
+        echo "The 'virt-customize' tool (from libguestfs-tools) is required to:"
+        echo "  • Resize cloud image partitions and filesystems"
+        echo "  • Install qemu-guest-agent inside VM templates"
+        echo "  • Configure cloud-init for first boot"
+        echo "  • Inject custom packages and configurations"
+        echo ""
+        echo "Without libguestfs-tools, this script cannot create functional VM templates."
+        echo "═══════════════════════════════════════════════════════════════════════════════"
+        echo ""
+        read -r -p "Install libguestfs-tools now? [y/N]: " reply
+        if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
+            echo ""
+            echo "ERROR: Cannot proceed without libguestfs-tools."
+            echo "VM template creation requires virt-customize for image manipulation."
+            echo "Install manually with: apt-get install libguestfs-tools"
+            echo ""
+            exit 1
+        fi
+
+        echo "Installing libguestfs-tools (this may take a minute)..."
+        if apt-get update && apt-get install -y libguestfs-tools; then
+            echo "Successfully installed libguestfs-tools."
+        else
+            echo "ERROR: Failed to install libguestfs-tools."
+            exit 1
+        fi
     fi
 }
 
