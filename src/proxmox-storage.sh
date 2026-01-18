@@ -441,8 +441,16 @@ next_letter() {
   used="$(blkid -o value -s LABEL 2>/dev/null | grep -E "^${typ}-${hd}[A-Z]$" || true)"
   
   # Also check LVM VG names (for lvm/lvm-thin storage)
-  local vg_names
-  vg_names="$(vgs --noheadings -o vg_name 2>/dev/null | grep -E "^${typ}-${hd}[A-Z]$" || true)"
+  local vg_names vg_list
+  vg_list="$(vgs --noheadings -o vg_name 2>/dev/null | awk '{print $1}' || true)"
+  
+  # Filter VG names that match our pattern
+  while IFS= read -r vg; do
+    [[ -z "$vg" ]] && continue
+    if [[ "$vg" =~ ^${typ}-${hd}[A-Z]$ ]]; then
+      vg_names+="${vg}"$'\n'
+    fi
+  done <<< "$vg_list"
   
   # Combine both sources
   used="${used}${vg_names}"
@@ -1923,7 +1931,7 @@ cleanup_lvm_on_non_system_disks() {
     local pv vg
     pv="${line%% *}"
     vg="${line##* }"
-    [[ -n "$pv" ]] || continue
+    [[ -n "$pv" && -n "$vg" ]] || continue
     if [[ "$vg" == "pve" ]]; then
       p_warn "Skipping PV $pv (system VG)"
       continue
