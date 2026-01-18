@@ -324,9 +324,55 @@ Examples:
   ./proxmox-storage.sh --list-usage SSD-1C
 ```
 
+## Bash Auto-Completion
+
+This script includes intelligent tab completion to speed up your workflow and reduce typing errors.
+
+> [!TIP]
+> Most modern Linux systems already have bash-completion installed. Just source `.bash_completion` from the src/ directory to enable it!
+
+### Quick Setup
+
+```bash
+cd /path/to/cloud-image-for-proxmox/src
+source .bash_completion
+```
+
+### What You Get
+
+**Context-aware completions:**
+- After `--type`, shows: `dir lvm lvm-thin nfs`
+- After `--storage`, shows existing Proxmox storage pools
+- After `--nfs-server`, shows example IP addresses
+- After `--nfs-path`, shows common NFS export paths
+
+**Mode-specific filtering:**
+- `--provision` mode only shows provisioning-related flags
+- `--deprovision` mode only shows deprovisioning-related flags
+- Prevents invalid flag combinations
+
+**Examples:**
+
+```bash
+./proxmox-storage.sh --prov<TAB>
+# Completes to: --provision
+
+./proxmox-storage.sh --provision --type <TAB>
+# Shows: dir lvm lvm-thin nfs
+
+./proxmox-storage.sh --provision --type nfs --nfs-<TAB>
+# Shows: --nfs-server --nfs-path --nfs-options
+
+./proxmox-storage.sh --deprovision --storage <TAB>
+# Shows: HDD-1A SSD-1A (existing storage pools)
+```
+
+> [!NOTE]
+> To have completion always available, add `source /full/path/to/src/.bash_completion` to your `~/.bash_completion` file (not ~/.bashrc). This is the standard location for user-specific bash completions.
+
 ## `--status`
 
-Prints a concise table of attached disks and their characteristics using SMART data where possible. The `Media` column shows rotation speed for HDDs, `SSD` for solid‑state disks, and `unknown` if SMART does not report a rotation rate.
+Prints a concise table of attached disks and their characteristics using SMART data where possible. The `Media` column shows rotation speed for HDDs, `SSD` for solid‑state disks, `NVMe` for NVMe drives, and `unknown` if SMART does not report a rotation rate.
 
 > [!TIP]
 > Use this before provisioning to verify which disks are SSDs vs HDDs and to spot external RAID devices.

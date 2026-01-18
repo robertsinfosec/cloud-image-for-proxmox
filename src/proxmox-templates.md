@@ -93,6 +93,57 @@ Below are the details of the command-line options.
 > [!TIP]
 > Use `--validate` before building to catch configuration errors early!
 
+## Bash Auto-Completion
+
+This script includes intelligent tab completion to speed up your workflow and reduce typing errors.
+
+> [!TIP]
+> Most modern Linux systems already have bash-completion installed. Just source `.bash_completion` from the src/ directory to enable it!
+
+### Quick Setup
+
+```bash
+cd /path/to/cloud-image-for-proxmox/src
+source .bash_completion
+```
+
+### What You Get
+
+**Context-aware completions:**
+- After `--distro`, shows all available distributions: `almalinux alpine centos debian opensuse oraclelinux rockylinux ubuntu`
+- After `--version`, shows common version numbers and `latest`
+- After `--storage`, shows existing Proxmox storage pools
+- After `--template-id`, shows existing VM IDs as reference
+- After `--remove`, shows existing VM template IDs
+
+**Mode-specific filtering:**
+- `--build` mode shows build-related flags (`--distro`, `--version`, `--storage`, `--template-id`)
+- `--remove` mode shows removal-related flags (`--force`, `--whatif`)
+- `--validate` mode shows validation-related flags (`--distro`)
+- Prevents invalid flag combinations
+
+**Examples:**
+
+```bash
+./proxmox-templates.sh --bu<TAB>
+# Completes to: --build
+
+./proxmox-templates.sh --build --distro <TAB>
+# Shows: almalinux alpine centos debian opensuse oraclelinux rockylinux ubuntu
+
+./proxmox-templates.sh --build --distro ubuntu --version <TAB>
+# Shows: 20.04 22.04 24.04 latest
+
+./proxmox-templates.sh --build --storage <TAB>
+# Shows: HDD-1A SSD-1A (existing storage pools)
+
+./proxmox-templates.sh --remove <TAB>
+# Shows: 100001 100002 100003 (existing template IDs)
+```
+
+> [!NOTE]
+> To have completion always available, add `source /full/path/to/src/.bash_completion` to your `~/.bash_completion` file (not ~/.bashrc). This is the standard location for user-specific bash completions.
+
 ## Auto-Generation Features
 
 ### VMID Auto-Generation

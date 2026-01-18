@@ -1,0 +1,18 @@
+#!/bin/bash
+# Auto-loader for Proxmox script bash completions
+# Source this file to enable tab completion for proxmox-storage.sh and proxmox-templates.sh
+
+# Get the directory where this file lives
+COMPLETION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/completions"
+
+# Source all completion scripts in the completions directory
+if [[ -d "${COMPLETION_DIR}" ]]; then
+  for completion_file in "${COMPLETION_DIR}"/*; do
+    if [[ -f "${completion_file}" ]]; then
+      # shellcheck disable=SC1090
+      source "${completion_file}"
+    fi
+  done
+fi
+
+unset COMPLETION_DIR

@@ -1,0 +1,128 @@
+#!/bin/bash
+# Bash completion for proxmox-templates.sh
+# This file provides intelligent tab completion for VM template operations
+
+_proxmox_templates_completion() {
+  local cur prev words cword
+  _init_completion || return
+
+  # Common template options
+  local all_opts="--build --remove --clean-cache --validate --status --distro --version --storage --template-id --force --whatif --help"
+  local distro_values="almalinux alpine centos debian opensuse oraclelinux rockylinux ubuntu"
+  
+  # Handle completion based on previous word
+  case "${prev}" in
+    --distro)
+      # Complete with available Linux distributions
+      COMPREPLY=($(compgen -W "${distro_values}" -- "${cur}"))
+      return 0
+      ;;
+    
+    --version)
+      # Version completion depends on distro - show common examples
+      if [[ -z "${cur}" ]]; then
+        COMPREPLY=("9" "22.04" "15" "12" "latest")
+      else
+        # Let user type their own version
+        COMPREPLY=($(compgen -W "8 9 10 11 12 20.04 22.04 24.04 latest" -- "${cur}"))
+      fi
+      return 0
+      ;;
+    
+    --storage)
+      # Complete with existing Proxmox storage IDs
+      if command -v pvesm >/dev/null 2>&1; then
+        local storage_ids
+        storage_ids=$(pvesm status 2>/dev/null | awk 'NR>1 {print $1}' | sort -u)
+        COMPREPLY=($(compgen -W "${storage_ids}" -- "${cur}"))
+      fi
+      return 0
+      ;;
+    
+    --template-id)
+      # Complete with common template ID ranges or existing VMs
+      if command -v qm >/dev/null 2>&1; then
+        # Show existing VM IDs as reference (user can pick unused one)
+        local vm_ids
+        vm_ids=$(qm list 2>/dev/null | awk 'NR>1 {print $1}' | sort -n)
+        if [[ -n "${vm_ids}" ]]; then
+          COMPREPLY=($(compgen -W "${vm_ids}" -- "${cur}"))
+        fi
+      else
+        # Suggest common template ID ranges
+        if [[ -z "${cur}" ]]; then
+          COMPREPLY=("9000" "9001" "9010" "9100")
+        fi
+      fi
+      return 0
+      ;;
+    
+    --remove)
+      # For remove, complete with existing VM template IDs
+      if command -v qm >/dev/null 2>&1; then
+        local template_ids
+        template_ids=$(qm list 2>/dev/null | awk 'NR>1 && $3 ~ /template/ {print $1}' | sort -n)
+        if [[ -n "${template_ids}" ]]; then
+          COMPREPLY=($(compgen -W "${template_ids}" -- "${cur}"))
+        fi
+      fi
+      return 0
+      ;;
+    
+    ./proxmox-templates.sh|proxmox-templates.sh)
+      # First argument - show main modes
+      local modes="--build --remove --clean-cache --validate --status --help"
+      COMPREPLY=($(compgen -W "${modes}" -- "${cur}"))
+      return 0
+      ;;
+  esac
+  
+  # Context-aware completion based on what's already been typed
+  local has_build=0
+  local has_remove=0
+  local has_clean=0
+  local has_validate=0
+  local has_distro=0
+  
+  for word in "${words[@]}"; do
+    case "${word}" in
+      --build) has_build=1 ;;
+      --remove) has_remove=1 ;;
+      --clean-cache) has_clean=1 ;;
+      --validate) has_validate=1 ;;
+      --distro) has_distro=1 ;;
+    esac
+  done
+  
+  # Build context-aware options
+  local valid_opts=""
+  
+  if [[ ${has_build} -eq 1 ]]; then
+    # Build mode - show build-related options
+    valid_opts="--distro --version --storage --template-id --force --whatif"
+    # If distro is set, version is relevant
+    if [[ ${has_distro} -eq 1 ]]; then
+      valid_opts="--version --storage --template-id --force --whatif"
+    fi
+  elif [[ ${has_remove} -eq 1 ]]; then
+    # Remove mode - minimal options
+    valid_opts="--force --whatif"
+  elif [[ ${has_clean} -eq 1 ]]; then
+    # Clean cache mode - can specify distro
+    valid_opts="--distro --force"
+  elif [[ ${has_validate} -eq 1 ]]; then
+    # Validate mode - can specify distro
+    valid_opts="--distro"
+  else
+    # No mode selected - show all modes
+    valid_opts="--build --remove --clean-cache --validate --status --help"
+  fi
+  
+  # Complete with available options
+  COMPREPLY=($(compgen -W "${valid_opts}" -- "${cur}"))
+  return 0
+}
+
+# Register completion function for both script names
+complete -F _proxmox_templates_completion ./proxmox-templates.sh
+complete -F _proxmox_templates_completion proxmox-templates.sh

@@ -140,3 +140,83 @@ Examples:
   ```
 
 > Documentation: [proxmox-templates.md](proxmox-templates.md)
+
+## Bash Auto-Completion
+
+Both scripts include intelligent tab completion to speed up your workflow and reduce errors.
+
+### Features
+
+- **Context-aware suggestions** - Only shows valid options based on what you've typed
+- **Dynamic completions** - Suggests existing storage pools, VM IDs, and template IDs
+- **Value hints** - Shows example values for options like `--type`, `--distro`, `--version`
+- **Smart filtering** - Completion adapts based on the mode (provision, build, remove, etc.)
+
+> [!TIP]
+> **Modern Linux systems** (Ubuntu, Debian, Fedora, etc.) already have bash-completion installed and working. You just need to source our completion file - no system-wide setup required!
+
+### Quick Setup
+
+Simply source the completion file from the src/ directory:
+
+```bash
+cd /path/to/cloud-image-for-proxmox/src
+source .bash_completion
+```
+
+Now tab completion works:
+
+```bash
+./proxmox-storage.sh --prov<TAB>        # Completes to --provision
+./proxmox-storage.sh --provision --type <TAB>  # Shows: dir lvm lvm-thin nfs
+./proxmox-templates.sh --build --distro <TAB>  # Shows all available distros
+```
+
+### Always Available (Optional)
+
+The proper place for user-specific bash completions is `~/.bash_completion` (in your home directory). Modern systems with bash-completion installed automatically source this file.
+
+Add this one-time to **`~/.bash_completion`** (create it if it doesn't exist):
+
+```bash
+# Proxmox storage and template script completions
+source /home/robert/gitlocal/robertsinfosec/cloud-image-for-proxmox/src/.bash_completion
+```
+
+> [!NOTE]
+> Replace the path with your actual clone location. This follows bash-completion best practices - user completions go in `~/.bash_completion`, not `~/.bashrc` or `~/.bash_aliases`.
+
+### Troubleshooting
+
+If tab completion doesn't work after sourcing, you may need to install bash-completion:
+
+```bash
+# Debian/Ubuntu
+sudo apt install bash-completion
+
+# RHEL/Rocky/Alma
+sudo dnf install bash-completion
+
+# Then log out and back in, or source it manually:
+source /usr/share/bash-completion/bash_completion
+```
+
+> [!NOTE]
+> The completion files are in [src/completions/](completions/) and are automatically loaded by [.bash_completion](.bash_completion). You don't need to modify system-wide completion directories.
+
+### Completion Examples
+
+**Storage Script:**
+- `--provision --type <TAB>` -> Shows: `dir lvm lvm-thin nfs`
+- `--storage <TAB>` -> Shows existing Proxmox storage pools
+- `--nfs-server <TAB>` -> Shows IP address examples
+- `--deprovision --storage <TAB>` -> Filters to only show storage pools
+
+**Templates Script:**
+- `--build --distro <TAB>` -> Shows: `almalinux alpine centos debian opensuse oraclelinux rockylinux ubuntu`
+- `--distro ubuntu --version <TAB>` -> Shows common Ubuntu versions
+- `--storage <TAB>` -> Shows available Proxmox storage pools
+- `--remove <TAB>` -> Shows existing VM template IDs
+
+> [!NOTE]
+> Completion works with both `./proxmox-storage.sh` and `proxmox-storage.sh` (same for templates script).

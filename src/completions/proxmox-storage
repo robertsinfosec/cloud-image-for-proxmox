@@ -1,0 +1,102 @@
+#!/bin/bash
+# Bash completion for proxmox-storage.sh
+# This file provides intelligent tab completion for storage management operations
+
+_proxmox_storage_completion() {
+  local cur prev words cword
+  _init_completion || return
+
+  # Common storage options
+  local storage_opts="--provision --deprovision --status --type --force --whatif --nfs-server --nfs-path --help"
+  local type_values="dir lvm lvm-thin nfs"
+  
+  # Handle completion based on previous word
+  case "${prev}" in
+    --type)
+      # Complete with valid storage types
+      COMPREPLY=($(compgen -W "${type_values}" -- "${cur}"))
+      return 0
+      ;;
+    
+    --storage)
+      # Complete with existing Proxmox storage IDs
+      if command -v pvesm >/dev/null 2>&1; then
+        local storage_ids
+        storage_ids=$(pvesm status 2>/dev/null | awk 'NR>1 {print $1}' | sort -u)
+        COMPREPLY=($(compgen -W "${storage_ids}" -- "${cur}"))
+      fi
+      return 0
+      ;;
+    
+    --nfs-server)
+      # Complete with IP addresses or hostnames (show placeholder)
+      if [[ -z "${cur}" ]]; then
+        COMPREPLY=("192.168.1.100" "nfs-server.local")
+      else
+        # Let user type their own
+        COMPREPLY=()
+      fi
+      return 0
+      ;;
+    
+    --nfs-path)
+      # Complete with common NFS export paths
+      if [[ -z "${cur}" ]]; then
+        COMPREPLY=("/export/storage" "/mnt/share")
+      else
+        # Directory-like completion
+        COMPREPLY=($(compgen -d -- "${cur}"))
+      fi
+      return 0
+      ;;
+    
+    ./proxmox-storage.sh|proxmox-storage.sh)
+      # First argument - show main modes
+      local modes="--provision --deprovision --status --help"
+      COMPREPLY=($(compgen -W "${modes}" -- "${cur}"))
+      return 0
+      ;;
+  esac
+  
+  # Context-aware completion based on what's already been typed
+  local has_provision=0
+  local has_deprovision=0
+  local has_type=0
+  local has_nfs_type=0
+  
+  for word in "${words[@]}"; do
+    case "${word}" in
+      --provision) has_provision=1 ;;
+      --deprovision) has_deprovision=1 ;;
+      --type) has_type=1 ;;
+    esac
+    if [[ "${word}" == "nfs" ]] && [[ ${has_type} -eq 1 ]]; then
+      has_nfs_type=1
+    fi
+  done
+  
+  # Build context-aware options
+  local valid_opts=""
+  
+  if [[ ${has_provision} -eq 1 ]]; then
+    # Provisioning mode - show relevant options
+    valid_opts="--type --force --whatif"
+    if [[ ${has_nfs_type} -eq 1 ]]; then
+      valid_opts="${valid_opts} --nfs-server --nfs-path"
+    fi
+  elif [[ ${has_deprovision} -eq 1 ]]; then
+    # Deprovisioning mode - show relevant options
+    valid_opts="--storage --force --whatif"
+  else
+    # No mode selected - show all modes
+    valid_opts="--provision --deprovision --status --help"
+  fi
+  
+  # Complete with available options
+  COMPREPLY=($(compgen -W "${valid_opts}" -- "${cur}"))
+  return 0
+}
+
+# Register completion function for both script names
+complete -F _proxmox_storage_completion ./proxmox-storage.sh
+complete -F _proxmox_storage_completion proxmox-storage.sh
