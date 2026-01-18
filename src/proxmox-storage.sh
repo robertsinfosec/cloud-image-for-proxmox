@@ -1638,7 +1638,10 @@ show_storage_mapping() {
   # Track whether we display any mappings
   local found_mappings=0
   
-  for sid in "${!storage_types[@]}"; do
+  # Sort storage IDs alphabetically for consistent display
+  mapfile -t sorted_sids < <(printf '%s\n' "${!storage_types[@]}" | sort)
+  
+  for sid in "${sorted_sids[@]}"; do
     local storage_type="${storage_types[$sid]}"
     local storage_path="${storage_paths[$sid]}"
     
