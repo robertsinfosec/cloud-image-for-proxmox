@@ -96,10 +96,58 @@ setStatus() {
         q)
             echo -e "[${LightPurple}?${NC}] ${LightPurple}${description}${NC}"
         ;;
+        step)
+            echo -e "[${LightCyan}*${NC}] ${LightCyan}STEP $description${NC}"
+        ;;
         *)
             echo -e "[${LightCyan}*${NC}] ${LightCyan}${description}${NC}"
         ;;
     esac
+}
+
+show_mode_banner() {
+    local mode="$1"
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════════════════════╗"
+    case "$mode" in
+        build)
+            echo -e "║ ${LightGreen}MODE: BUILD TEMPLATES${NC}"
+            echo "╠════════════════════════════════════════════════════════════════════════════════╣"
+            echo "║ This will download cloud images and create Proxmox VM templates."
+            if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+                echo "║ Filtered to: ${ONLY_FILTERS[*]}"
+            else
+                echo "║ Target: All configured templates"
+            fi
+            ;;
+        remove)
+            echo -e "║ ${Red}MODE: REMOVE TEMPLATES${NC}"
+            echo "╠════════════════════════════════════════════════════════════════════════════════╣"
+            echo -e "║ ${Red}WARNING: This will DESTROY VM templates!${NC}"
+            if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
+                echo "║ Filtered to: ${ONLY_FILTERS[*]}"
+            else
+                echo "║ Target: ALL configured templates"
+            fi
+            ;;
+        clean-cache)
+            echo -e "║ ${Yellow}MODE: CLEAN CACHE${NC}"
+            echo "╠════════════════════════════════════════════════════════════════════════════════╣"
+            echo "║ This will remove all cached cloud images and checksums."
+            ;;
+        validate)
+            echo "║ MODE: VALIDATE CONFIGURATION"
+            echo "╠════════════════════════════════════════════════════════════════════════════════╣"
+            echo "║ This will check configuration files without building."
+            ;;
+        status)
+            echo "║ MODE: STATUS REPORT"
+            echo "╠════════════════════════════════════════════════════════════════════════════════╣"
+            echo "║ This will show drift between configured and existing templates."
+            ;;
+    esac
+    echo "╚════════════════════════════════════════════════════════════════════════════════╝"
+    echo ""
 }
 
 require_root() {
@@ -780,6 +828,27 @@ if [[ "$BUILD" != "true" && "$CLEAN_CACHE" != "true" && "$REMOVE_TEMPLATES" != "
     exit 0
 fi
 
+# Validate argument combinations
+if [[ "$REMOVE_TEMPLATES" == "true" && "$BUILD" == "true" ]]; then
+    echo "ERROR: Cannot use --remove and --build together"
+    exit 1
+fi
+
+if [[ "$CLEAN_CACHE" == "true" ]] && [[ "$BUILD" == "true" || "$REMOVE_TEMPLATES" == "true" || "$VALIDATE" == "true" || "$STATUS" == "true" ]]; then
+    echo "ERROR: --clean-cache cannot be combined with other actions"
+    exit 1
+fi
+
+if [[ "$VALIDATE" == "true" ]] && [[ "$BUILD" == "true" || "$REMOVE_TEMPLATES" == "true" ]]; then
+    echo "ERROR: --validate cannot be combined with --build or --remove"
+    exit 1
+fi
+
+if [[ "$STATUS" == "true" ]] && [[ "$BUILD" == "true" || "$REMOVE_TEMPLATES" == "true" ]]; then
+    echo "ERROR: --status cannot be combined with --build or --remove"
+    exit 1
+fi
+
 CONFIG_DIR="$CONFIG_ROOT/config"
 DISTROS_DIR="$CONFIG_ROOT/distros"
 DEFAULTS_FILE="$CONFIG_DIR/_defaults.yaml"
@@ -801,10 +870,25 @@ fi
 
 echo -e "${LightPurple}$Name $Version${NC}"
 echo ""
-setStatus "Initializing environment" "*"
+
+# Determine mode for banner
+if [[ "$BUILD" == "true" ]]; then
+    show_mode_banner "build"
+elif [[ "$REMOVE_TEMPLATES" == "true" ]]; then
+    show_mode_banner "remove"
+elif [[ "$CLEAN_CACHE" == "true" ]]; then
+    show_mode_banner "clean-cache"
+elif [[ "$VALIDATE" == "true" ]]; then
+    show_mode_banner "validate"
+elif [[ "$STATUS" == "true" ]]; then
+    show_mode_banner "status"
+fi
+
+setStatus "1: Initializing environment" "step"
 
 # Handle cleanup operations
 if [[ "$CLEAN_CACHE" == "true" ]]; then
+    setStatus "2: Cleaning cache directory" "step"
     DEFAULT_CACHE_DIR=$(yq_read ".defaults.cache.dir" "$DEFAULTS_FILE")
     if [[ "$DEFAULT_CACHE_DIR" != /* ]]; then
         CACHE_DIR="$CONFIG_ROOT/$DEFAULT_CACHE_DIR"
@@ -823,7 +907,7 @@ if [[ "$CLEAN_CACHE" == "true" ]]; then
 fi
 
 if [[ "$REMOVE_TEMPLATES" == "true" ]]; then
-    setStatus "Scanning for templates to remove" "*"
+    setStatus "2: Scanning for templates to remove" "step"
     
     # Load build files to determine which VMIDs to clean
     BUILD_FILES=()
