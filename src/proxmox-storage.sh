@@ -698,14 +698,26 @@ list_target_disks() {
       # Normalize filter (could be /dev/sdb, sdb, HDD-2C, etc.)
       local normalized_filter="$filter"
       if [[ "$filter" =~ ^[a-zA-Z]+-[0-9]+[A-Z]$ ]]; then
-        # This is a storage name like HDD-2C - we'll match it later after provisioning check
-        # For now, we need to check if this disk already has this label
+        # This is a storage name like HDD-2C
+        # Check 1: Partition label
         local part
         part="$(get_first_partition "$disk" || true)"
         if [[ -n "$part" ]]; then
           local existing_label
           existing_label="$(blkid -o value -s LABEL "$part" 2>/dev/null || true)"
           if [[ "$existing_label" == "$filter" ]]; then
+            matched_disks+=("$disk")
+            break
+          fi
+        fi
+        
+        # Check 2: LVM VG name (for when storage is deprovisioned but VG still exists)
+        local vg_name pv_device base_device
+        vg_name="$filter"
+        pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$vg_name" '$2==vg {print $1; exit}')
+        if [[ -n "$pv_device" ]]; then
+          base_device=$(echo "$pv_device" | sed 's/[0-9]*$//')
+          if [[ "$disk" == "$base_device" ]]; then
             matched_disks+=("$disk")
             break
           fi
@@ -1919,7 +1931,7 @@ cleanup_lvm_on_non_system_disks() {
       if [[ "$disk" != /dev/* ]]; then
         disk="/dev/$disk"
       fi
-      if matches_any_filter "$disk"; then
+      if matches_any_filter "$disk" "$vg"; then
         vgs_has_target["$vg"]=1
       else
         vgs_has_other["$vg"]=1
