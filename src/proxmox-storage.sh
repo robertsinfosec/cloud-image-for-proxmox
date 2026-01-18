@@ -374,7 +374,7 @@ hostname_digit() {
 
 # Determine base disk device backing /
 get_system_disk() {
-  local src pv disk vg
+  local src pv disk vg base
   src="$(findmnt -n -o SOURCE /)"
 
   # Default Proxmox ISO install puts / on LVM (/dev/mapper/pve-root).
@@ -387,15 +387,33 @@ get_system_disk() {
     pv="$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$vg" '$2==vg {print $1; exit 0}')"
     [[ -n "$pv" ]] || die "Unable to determine PV device backing root VG '$vg'."
     
-    disk="$(lsblk -no PKNAME "$pv" | awk 'NF{print $1; exit 0}')"
+    # For NVMe: pv might be /dev/nvme0n1p3, need base disk nvme0n1
+    # For SATA: pv might be /dev/sda3, need base disk sda
+    # lsblk can return multiple lines for nested devices; get the last one (base disk)
+    disk="$(lsblk -no PKNAME "$pv" 2>/dev/null | awk 'NF{line=$1} END{print line}')"
+    if [[ -z "$disk" ]]; then
+      # Fallback: strip partition number manually
+      base="$(basename "$pv")"
+      # Handle NVMe (nvme0n1p3 -> nvme0n1) and SATA (sda3 -> sda)
+      disk="$(echo "$base" | sed 's|p\?[0-9]\+$||')"
+    fi
     [[ -n "$disk" ]] || die "Unable to determine base disk for PV '$pv'."
+    # Ensure disk doesn't have /dev/ prefix already
+    disk="$(basename "$disk")"
     printf '%s' "/dev/$disk"
     return 0
   fi
 
   # Fallback: root on partition
-  disk="$(lsblk -no PKNAME "$src" | awk 'NF{print $1; exit 0}')"
+  # lsblk can return multiple lines for nested devices; get the last one (base disk)
+  disk="$(lsblk -no PKNAME "$src" 2>/dev/null | awk 'NF{line=$1} END{print line}')"
+  if [[ -z "$disk" ]]; then
+    # Fallback: strip partition number manually
+    base="$(basename "$src")"
+    disk="$(echo "$base" | sed 's|p\?[0-9]\+$||')"
+  fi
   [[ -n "$disk" ]] || die "Unable to determine base disk for root source '$src'."
+  disk="$(basename "$disk")"
   printf '%s' "/dev/$disk"
 }
 
