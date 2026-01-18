@@ -1376,7 +1376,7 @@ if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
     setStatus "Applying filters: ${ONLY_FILTERS[*]}" "*"
 fi
 
-setStatus "Planning build execution" "*"
+setStatus "Planning build execution (this may take a minute)..." "*"
 PLANNED_BUILDS=()
 for build_file in "${BUILD_FILES[@]}"; do
     build_count=$(yq_read ".builds | length" "$build_file")
@@ -1666,7 +1666,7 @@ for build_file in "${BUILD_FILES[@]}"; do
             fi
 
             if [[ ${#VIRT_ARGS[@]} -gt 0 ]]; then
-                setStatus "Customizing image" "*"
+                setStatus "Customizing image (this may take several minutes)..." "*"
                 if ! LIBGUESTFS_BACKEND=direct LIBGUESTFS_NETWORK=1 LIBGUESTFS_TIMEOUT=600 virt-customize --network -a "$WORK_IMAGE" "${VIRT_ARGS[@]}"; then
                     setStatus "Unable to customize image: $WORK_IMAGE" "f"
                     BUILD_STEPS+=("image_customization:failed")
