@@ -231,7 +231,24 @@ The script supports multiple Proxmox storage backends via the `--type` option:
 - ❌ Server-side quotas not visible to clients
 
 > [!NOTE]
-> **NFSv4 is the default.** This script uses NFSv4 by default (`vers=4`), which is more secure and performant than NFSv3. If your NAS only supports NFSv3, override with `--nfs-options "vers=3,soft"`.
+> **NFSv4 is the default and strongly recommended.** This script uses NFSv4 by default (`vers=4`), which offers significant advantages over NFSv3:
+> 
+> **Why NFSv4:**
+> - **Simpler firewall rules** - Only TCP port 2049 required (vs. multiple dynamic ports for NFSv3)
+> - **Better security** - Built-in Kerberos support, stronger authentication
+> - **Better performance** - Improved caching, compound operations
+> - **Mature standard** - Released December 2000 ([RFC 3010](https://www.rfc-editor.org/rfc/rfc3010)), mainstream since March 2015 ([RFC 7530](https://www.rfc-editor.org/rfc/rfc7530))
+> 
+> **NFSv3 requires complex firewall configuration:**
+> - TCP 2049 (NFS)
+> - TCP/UDP 111 (rpcbind/portmapper)
+> - TCP/UDP 32765-32768 (mountd, statd, lockd - dynamic ports)
+> 
+> If your NAS only supports NFSv3, override with `--nfs-options "vers=3,soft"` but consider upgrading - NFSv4 has been production-ready for over 20 years.
+
+> [!TIP]
+> **Firewall configuration for NFSv4:**
+> In firewalled/network-segmented environments, allow **TCP port 2049** from your Proxmox nodes to the NFS server. That's all that should be needed.
 
 > [!IMPORTANT]
 > **Proxmox manages NFS mounts.** Unlike directory storage (`--type dir`), you don't manage mount points manually. When you add NFS storage, Proxmox automatically:
