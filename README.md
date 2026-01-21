@@ -1,4 +1,4 @@
-# Proxmox Automation Toolkit
+# Proxmox Toolkit
 
 **Opinionated, battle-tested automation for Proxmox storage and cloud-init templates**
 
