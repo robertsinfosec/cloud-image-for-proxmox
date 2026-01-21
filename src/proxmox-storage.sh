@@ -752,14 +752,27 @@ reclaim_system_disk() {
 
 is_on_disk() {
   local dev="$1" disk="$2"
-  local base
-  if [[ "$dev" == "$disk"* ]]; then
-    return 0
+  local dev_base disk_base
+  
+  # Normalize both to base disk names (strip /dev/ for comparison)
+  dev_base="$(basename "$dev")"
+  disk_base="$(basename "$disk")"
+  
+  # Get parent disk of dev if it's a partition
+  local parent
+  parent="$(lsblk -no PKNAME "$dev" 2>/dev/null | tail -1)"
+  if [[ -n "$parent" ]]; then
+    dev_base="$parent"
   fi
-  if base="$(lsblk -no PKNAME "$dev" 2>/dev/null)" && [[ -n "$base" ]]; then
-    dev="/dev/$base"
+  
+  # Get parent disk of disk if it's a partition  
+  parent="$(lsblk -no PKNAME "$disk" 2>/dev/null | tail -1)"
+  if [[ -n "$parent" ]]; then
+    disk_base="$parent"
   fi
-  [[ "$dev" == "$disk" ]]
+  
+  # Compare base disk names
+  [[ "$dev_base" == "$disk_base" ]]
 }
 
 is_on_system_disk() {
