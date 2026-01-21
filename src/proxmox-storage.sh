@@ -83,7 +83,7 @@ STORAGE_NAME=""
 STORAGE_TYPE="dir"  # dir, lvm, lvm-thin, nfs
 NFS_SERVER=""
 NFS_PATH=""
-NFS_OPTIONS="vers=3,soft"
+NFS_OPTIONS="vers=4,soft"
 
 log_context() {
   local node
@@ -115,7 +115,7 @@ Options:
                       - nfs: Network filesystem (requires --nfs-server and --nfs-path)
   --nfs-server <host> NFS server hostname or IP (required with --type nfs)
   --nfs-path <path>   NFS export path (required with --type nfs)
-  --nfs-options <opts> NFS mount options (default: vers=3,soft)
+  --nfs-options <opts> NFS mount options (default: vers=4,soft)
   --rename            Rename existing storage (non-destructive)
                       Format: --rename old-name:new-name
                       Example: --rename pve-disk-storage1:SSD-1C
