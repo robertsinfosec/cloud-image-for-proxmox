@@ -205,32 +205,56 @@ The script supports multiple Proxmox storage backends via the `--type` option:
 
 **When to use:**
 - Shared storage across cluster nodes
-- Centralized storage server
+- Centralized storage server (NAS/SAN)
 - Need to access same data from multiple nodes
 
 **How it works:**
-- Mounts NFS export at `/mnt/nfs/<storage-id>`
-- Adds to fstab for persistence
-- Registers with Proxmox as NFS storage
+- **Proxmox manages everything** - mount points, fstab entries, lifecycle
+- Mounts NFS export at `/mnt/pve/<storage-id>` (managed by Proxmox)
 - Storage named `NFS-#A`, `NFS-#B`, etc. (where `#` is node digit)
 
 **Additional options:**
-- `--nfs-server <hostname>` - NFS server (required)
-- `--nfs-path <path>` - Export path (required)
-- `--nfs-options <opts>` - Mount options (default: `vers=3,soft`)
+- `--nfs-server <hostname>` - NFS server hostname or IP (required)
+- `--nfs-path <path>` - Export path on server (required)
+- `--nfs-options <opts>` - Mount options (default: `vers=4,soft`)
 
 **Pros:**
-- Shared across cluster (not node-local)
-- Centralized management
-- Can use advanced NAS features
+- ✅ Shared across cluster (not node-local)
+- ✅ Centralized management
+- ✅ Can use advanced NAS features (snapshots, replication)
+- ✅ No local disk required
 
 **Cons:**
-- Network dependency
-- Performance depends on network
-- Single point of failure (if server goes down)
+- ❌ Network dependency
+- ❌ Performance depends on network quality
+- ❌ Single point of failure (if server goes down)
+- ❌ Server-side quotas not visible to clients
 
 > [!NOTE]
-> NFS storage is fundamentally different from disk-based storage types. It doesn't provision local disks and cannot be used with `--only` filters. Each NFS mount gets a unique `NFS-#A` style name on each node.
+> **NFSv4 is the default.** This script uses NFSv4 by default (`vers=4`), which is more secure and performant than NFSv3. If your NAS only supports NFSv3, override with `--nfs-options "vers=3,soft"`.
+
+> [!IMPORTANT]
+> **Proxmox manages NFS mounts.** Unlike directory storage (`--type dir`), you don't manage mount points manually. When you add NFS storage, Proxmox automatically:
+> - Creates `/mnt/pve/<storage-id>` 
+> - Manages `/etc/pve/storage.cfg` entries
+> - Handles mounting/unmounting via `pvesm`
+> 
+> This means you **cannot** use custom mount points with NFS storage.
+
+> [!CAUTION]
+> **NFS quotas are invisible to clients.** If you set a quota on your NAS (e.g., 2TB limit), Proxmox will show the **entire volume's** free space, not your quota. The quota is still enforced server-side (you'll get write errors when you hit the limit), but space reporting will be incorrect. Consider:
+> - Using Proxmox-side content limits (Datacenter → Storage → Edit)
+> - Creating a dedicated NAS volume for Proxmox (so reported size matches reality)
+> - Monitoring quota usage on the NAS itself
+
+> [!TIP]
+> **NFS is fundamentally different** from disk-based storage types. It doesn't provision local disks and cannot be used with `--only` filters. Each NFS provisioning creates a new shared storage entry that's accessible across your cluster.
+
+**Prerequisites:**
+The script automatically checks for and prompts to install the `nfs-common` package if missing. This package provides:
+- `mount.nfs` - NFS filesystem mounting support
+- `rpc.statd` - NFS lock management
+- `showmount` - Server discovery (NFSv3 only)
 
 ## Choosing a storage type
 

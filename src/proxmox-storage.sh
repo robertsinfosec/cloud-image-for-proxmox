@@ -504,31 +504,30 @@ get_system_disk() {
     
     # For NVMe: pv might be /dev/nvme0n1p3, need base disk nvme0n1
     # For SATA: pv might be /dev/sda3, need base disk sda
-    # lsblk can return multiple lines for nested devices; get the last one (base disk)
-    disk="$(lsblk -no PKNAME "$pv" 2>/dev/null | awk 'NF{line=$1} END{print line}')"
+    # lsblk -no PKNAME returns the parent disk name without /dev/ prefix
+    disk="$(lsblk -no PKNAME "$pv" 2>/dev/null | tail -1)"
     if [[ -z "$disk" ]]; then
-      # Fallback: strip partition number manually
+      # Fallback: strip partition number manually from the PV device
       base="$(basename "$pv")"
       # Handle NVMe (nvme0n1p3 -> nvme0n1) and SATA (sda3 -> sda)
       disk="$(echo "$base" | sed 's|p\?[0-9]\+$||')"
     fi
     [[ -n "$disk" ]] || die "Unable to determine base disk for PV '$pv'."
-    # Ensure disk doesn't have /dev/ prefix already
-    disk="$(basename "$disk")"
+    # lsblk returns name without /dev/, so add it
     printf '%s' "/dev/$disk"
     return 0
   fi
 
   # Fallback: root on partition
-  # lsblk can return multiple lines for nested devices; get the last one (base disk)
-  disk="$(lsblk -no PKNAME "$src" 2>/dev/null | awk 'NF{line=$1} END{print line}')"
+  # lsblk -no PKNAME returns the parent disk name without /dev/ prefix
+  disk="$(lsblk -no PKNAME "$src" 2>/dev/null | tail -1)"
   if [[ -z "$disk" ]]; then
     # Fallback: strip partition number manually
     base="$(basename "$src")"
     disk="$(echo "$base" | sed 's|p\?[0-9]\+$||')"
   fi
   [[ -n "$disk" ]] || die "Unable to determine base disk for root source '$src'."
-  disk="$(basename "$disk")"
+  # lsblk returns name without /dev/, so add it
   printf '%s' "/dev/$disk"
 }
 
@@ -1166,9 +1165,9 @@ provision_nfs() {
   p_info "Provisioning NFS storage: $server:$export_path -> $sid"
   p_info "Proxmox will manage the mount at /mnt/pve/$sid"
 
-  # Verify NFS server is reachable (optional showmount check)
-  if command -v showmount >/dev/null 2>&1; then
-    p_info "Checking NFS server connectivity"
+  # Verify NFS server is reachable (only for NFSv3 - showmount doesn't work with NFSv4)
+  if [[ "$options" =~ vers=3 ]] && command -v showmount >/dev/null 2>&1; then
+    p_info "Checking NFSv3 server connectivity"
     if timeout 10 showmount -e "$server" >/dev/null 2>&1; then
       p_ok "NFS server $server is reachable"
       # Check if export exists
@@ -1180,8 +1179,10 @@ provision_nfs() {
     else
       p_warn "Cannot contact NFS server $server (showmount timeout). Will attempt anyway."
     fi
+  elif [[ "$options" =~ vers=4 ]]; then
+    p_info "Using NFSv4 (showmount check not applicable)"
   else
-    p_warn "showmount not available. Skipping NFS connectivity check."
+    p_info "Skipping NFS connectivity pre-check (will verify after mount)"
   fi
 
   # Let Proxmox handle all mounting - it will create /mnt/pve/$sid and manage fstab
@@ -1914,11 +1915,17 @@ show_storage_mapping() {
   local node
   node="$(hostname -s)"
   
-  # Parse storage config to get paths
+  # Parse storage config to get paths, filtering by node assignment
   declare -A storage_paths storage_types
   while IFS='|' read -r type sid path nodes shared; do
     [[ -n "$sid" ]] || continue
     [[ "$sid" == "local" || "$sid" == "local-lvm" ]] && continue
+    
+    # Skip storage not assigned to this node
+    if ! node_in_list "$node" "$nodes"; then
+      continue
+    fi
+    
     storage_types["$sid"]="$type"
     storage_paths["$sid"]="$path"
   done < <(parse_storage_cfg)
@@ -2324,10 +2331,14 @@ deprovision_storage_entries() {
         run_cmd "Unmounting $path" umount -lf "$path"
       fi
       remove_fstab_mount "$path"
+      # Clean up mount directories for our managed storage
       if [[ "$path" == /mnt/disks/* ]]; then
         run_cmd "Removing mount directory $path" rm -rf "$path"
+      elif [[ "$path" == /mnt/pve/* ]]; then
+        # Proxmox-managed NFS mount points - safe to remove after unmount
+        run_cmd "Removing Proxmox NFS mount directory $path" rm -rf "$path"
       else
-        p_warn "Skipping removal of non-/mnt/disks path: $path"
+        p_warn "Skipping removal of unrecognized path: $path"
       fi
     fi
   done
