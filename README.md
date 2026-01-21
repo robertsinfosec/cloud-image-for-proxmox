@@ -10,7 +10,7 @@
 
 ## What Is This?
 
-There are infinite ways to configure and use Proxmox. **This is my way** — developed through years of real-world use, refined for simplicity, reliability, and speed.
+There are infinite ways to configure and use Proxmox. **This is my way** - developed through years of real-world use, refined for simplicity, reliability, and speed.
 
 This toolkit provides two powerful scripts:
 - **`proxmox-storage.sh`** - Automatically discover, format, and provision storage devices

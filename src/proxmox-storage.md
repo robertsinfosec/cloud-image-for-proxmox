@@ -117,7 +117,7 @@ The script supports multiple Proxmox storage backends via the `--type` option:
 | **Storage Name** | `HDD-#A` / `SSD-#A` | `HDD-#A` / `SSD-#A` | `HDD-#A` / `SSD-#A` | `NFS-#A` |
 
 > [!TIP]
-> **For VM workloads, use `--type lvm-thin`**. It provides snapshots, efficient clones, and better space utilization—exactly what you want for virtual machines.
+> **For VM workloads, use `--type lvm-thin`**. It provides snapshots, efficient clones, and better space utilization, exactly what you want for virtual machines.
 
 ### Directory Storage (`--type dir`, default)
 
@@ -264,8 +264,6 @@ The script supports multiple Proxmox storage backends via the `--type` option:
 > - Creating a dedicated NAS volume for Proxmox (so reported size matches reality)
 > - Monitoring quota usage on the NAS itself
 
-> [!TIP]
-> **NFS is fundamentally different** from disk-based storage types. It doesn't provision local disks and cannot be used with `--only` filters. Each NFS provisioning creates a new shared storage entry that's accessible across your cluster.
 
 **Prerequisites:**
 The script automatically checks for and prompts to install the `nfs-common` package if missing. This package provides:
