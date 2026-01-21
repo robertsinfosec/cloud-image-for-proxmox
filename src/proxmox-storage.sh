@@ -401,6 +401,60 @@ require_cmd() {
   fi
 }
 
+require_nfs_common() {
+  p_info "Checking for NFS client utilities"
+  
+  # Check if nfs-common package is installed
+  if dpkg -l nfs-common 2>/dev/null | grep -q "^ii"; then
+    p_ok "nfs-common package is installed"
+    return 0
+  fi
+  
+  p_warn "NFS client utilities are not installed"
+  p_warn "The nfs-common package is required to provision NFS storage."
+  p_warn ""
+  p_warn "This package provides:"
+  p_warn "  - mount.nfs: NFS filesystem mounting support"
+  p_warn "  - showmount: NFS server discovery and validation"
+  p_warn "  - rpc.statd: NFS lock management"
+  p_warn ""
+  
+  if [[ "$WHATIF" -eq 1 ]]; then
+    p_warn "Simulation mode: would prompt to install nfs-common"
+    return 0
+  fi
+  
+  if [[ "$FORCE" -eq 1 ]]; then
+    p_warn "Force mode: attempting automatic installation"
+    if ! run_cmd "Installing nfs-common package" apt-get update && apt-get install -y nfs-common; then
+      die "Failed to install nfs-common package. Install manually: apt install nfs-common"
+    fi
+    return 0
+  fi
+  
+  # Interactive prompt
+  printf '%s\n' "[?] Install nfs-common package now? (y/N)"
+  printf '%s'   "[?] Choice: "
+  read -r choice
+  
+  case "$choice" in
+    y|Y|yes|YES)
+      p_info "Installing nfs-common package"
+      if ! run_cmd "Updating package cache" apt-get update; then
+        die "Failed to update package cache. Check your network connection."
+      fi
+      if ! run_cmd "Installing nfs-common" apt-get install -y nfs-common; then
+        die "Failed to install nfs-common package. Install manually: apt install nfs-common"
+      fi
+      p_ok "nfs-common package installed successfully"
+      ;;
+    *)
+      p_warn "Installation declined by user"
+      die "Cannot provision NFS storage without nfs-common package.\n       Install it manually: apt install nfs-common"
+      ;;
+  esac
+}
+
 storage_exists() {
   local sid="$1"
   pvesm status 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$sid"
@@ -1084,7 +1138,7 @@ provision_disk_lvm_thin() {
 
 provision_nfs() {
   local server="$1" export_path="$2" options="$3"
-  local sid mnt hd letter
+  local sid hd letter
 
   # Get hostname digit for consistent naming
   hd="$(get_hostname_digit)"
@@ -1108,9 +1162,9 @@ provision_nfs() {
   fi
   
   sid="NFS-${hd}${letter}"
-  mnt="/mnt/nfs/$sid"
 
   p_info "Provisioning NFS storage: $server:$export_path -> $sid"
+  p_info "Proxmox will manage the mount at /mnt/pve/$sid"
 
   # Verify NFS server is reachable (optional showmount check)
   if command -v showmount >/dev/null 2>&1; then
@@ -1119,36 +1173,57 @@ provision_nfs() {
       p_ok "NFS server $server is reachable"
       # Check if export exists
       if ! showmount -e "$server" 2>/dev/null | grep -q "^${export_path} "; then
-        p_warn "Export path $export_path not found in showmount output. Will attempt mount anyway."
+        p_warn "Export path $export_path not found in showmount output. Will attempt anyway."
+      else
+        p_ok "Export path $export_path is available"
       fi
     else
-      p_warn "Cannot contact NFS server $server (showmount timeout). Will attempt mount anyway."
+      p_warn "Cannot contact NFS server $server (showmount timeout). Will attempt anyway."
     fi
   else
-    p_warn "showmount not available (install nfs-common). Skipping NFS connectivity check."
+    p_warn "showmount not available. Skipping NFS connectivity check."
   fi
 
-  # Create mount point
-  run_cmd "Creating NFS mount point: $mnt" mkdir -p "$mnt"
-  ensure_fstab_writable
-
-  # Add to fstab if not present
-  if ! grep -qE "^[[:space:]]*${server}:${export_path}[[:space:]]+${mnt}[[:space:]]" /etc/fstab; then
-    run_cmd "Removing stale /etc/fstab entries for $mnt" sed -i "\|[[:space:]]${mnt}[[:space:]]|d" /etc/fstab
-    run_cmd_str "Adding /etc/fstab entry for NFS" \
-      "printf '%s:%s %s nfs %s 0 0\\n' '$server' '$export_path' '$mnt' '$options' | tee -a /etc/fstab >/dev/null"
-  else
-    p_ok "/etc/fstab entry already present for NFS"
+  # Let Proxmox handle all mounting - it will create /mnt/pve/$sid and manage fstab
+  if ! ensure_pvesm_nfs_storage "$sid" "$server" "$export_path" "$options"; then
+    p_err "Failed to add Proxmox NFS storage configuration"
+    p_err "Possible causes:"
+    p_err "  - NFS server $server is unreachable"
+    p_err "  - Export path $export_path does not exist"
+    p_err "  - Firewall blocking NFS ports (2049, 111)"
+    p_err "  - NFS server not exporting to this client IP"
+    p_err "  - Mount options '$options' are incompatible"
+    p_err ""
+    p_err "Check NFS server configuration and network connectivity."
+    
+    # Cleanup: remove storage if it was partially created
+    if storage_exists "$sid" 2>/dev/null; then
+      p_info "Cleaning up partial storage configuration"
+      pvesm remove "$sid" 2>/dev/null || true
+    fi
+    return 1
   fi
-
-  # Mount if not already mounted
-  if ! findmnt -n "$mnt" >/dev/null 2>&1; then
-    run_cmd "Mounting NFS: $mnt" mount "$mnt"
-  else
-    p_ok "Already mounted: $mnt"
+  
+  # Verify the storage is actually online
+  if [[ "$WHATIF" -ne 1 ]]; then
+    sleep 2  # Give Proxmox time to mount
+    local status
+    status="$(pvesm status -storage "$sid" 2>/dev/null | awk 'NR==2 {print $3}' || echo 'unknown')"
+    
+    if [[ "$status" == "active" ]]; then
+      p_ok "NFS storage $sid is online and accessible"
+    else
+      p_err "NFS storage $sid was added but is not active (status: $status)"
+      p_err "Proxmox was unable to mount the NFS share."
+      p_err "Check 'pvesm status' and system logs for details."
+      
+      # Cleanup
+      p_info "Removing non-functional storage configuration"
+      pvesm remove "$sid" 2>/dev/null || true
+      return 1
+    fi
   fi
-
-  ensure_pvesm_nfs_storage "$sid" "$server" "$export_path" "$options"
+  
   p_ok "Provisioned NFS storage: $sid"
 }
 
@@ -2639,6 +2714,10 @@ main() {
     require_cmd lvs
   fi
   
+  if [[ "$STORAGE_TYPE" == "nfs" ]]; then
+    require_nfs_common
+  fi
+  
   # Always needed for deprovisioning
   require_cmd resize2fs
   require_cmd blockdev
@@ -2693,7 +2772,9 @@ main() {
     if [[ "$STORAGE_TYPE" == "nfs" ]]; then
       p_info "Provisioning NFS storage (no local disks)"
       confirm_destroy
-      provision_nfs "$NFS_SERVER" "$NFS_PATH" "$NFS_OPTIONS"
+      if ! provision_nfs "$NFS_SERVER" "$NFS_PATH" "$NFS_OPTIONS"; then
+        die "Failed to provision NFS storage. Check error messages above and try again."
+      fi
       printf '\n'
       p_ok "Done. Final state:"
       pvesm status || true
