@@ -1894,7 +1894,7 @@ show_available_storage() {
     # Check storage status
     if [[ -n "${device_storage_map[$name]:-}" ]]; then
       storage_status="${device_storage_map[$name]}"
-    elif [[ "$dev" == "$sysdisk" ]]; then
+    elif is_on_disk "$dev" "$sysdisk"; then
       storage_status="(system)"
     else
       storage_status="-"
@@ -2087,7 +2087,7 @@ show_available_for_provisioning() {
     local dev="/dev/$name"
     
     # Skip system disk
-    if [[ "$dev" == "$sysdisk" ]]; then
+    if is_on_disk "$dev" "$sysdisk"; then
       continue
     fi
     
@@ -2540,6 +2540,11 @@ wipe_disks() {
   fi
   
   for d in "${disks[@]}"; do
+    # Skip empty disk names (e.g., from NFS storage which has no disk)
+    if [[ -z "$d" ]]; then
+      continue
+    fi
+    
     p_warn "Disk $d will be wiped to raw state"
 
     if lsblk -ln -o MOUNTPOINT "$d" | awk 'NF{print $1}' | grep -qv '^/mnt/disks/'; then
