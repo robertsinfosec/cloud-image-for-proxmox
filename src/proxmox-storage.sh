@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Strict error handling: ERR trap must be set BEFORE set -u to avoid trap crashes
+# This trap will fire if any command exits non-zero (unless caught by ||)
+# We use only safe variable references here to prevent trap-induced crashes
+on_err() {
+  # Use only safe variable references; LINENO and BASH_COMMAND are special and always available
+  local rc="${1:-unknown}"
+  local cmd="${2:-unknown}"
+  p_err "Command failed (rc=$rc) at line $rc: $cmd"
+  exit "${rc}"
+}
+trap 'on_err "${LINENO}" "${BASH_COMMAND}"' ERR
+
+# Enable strict variable checking AFTER ERR trap is set up
+# This prevents uninitialized variables from crashing the script before the trap is ready
+set -u
+
 # Color definitions
 NC="\033[0m"
 BOLD="\033[1m"
@@ -86,6 +102,11 @@ STORAGE_TYPE="dir"  # dir, lvm, lvm-thin, nfs
 NFS_SERVER=""
 NFS_PATH=""
 NFS_OPTIONS="vers=4,soft"
+
+# pvesm status cache - populated lazily, invalidated after every pvesm write.
+# Using plain variables (not arrays) so set -u is safe.
+_PVESM_STATUS_CACHE=""
+_PVESM_STATUS_READY=0
 
 log_context() {
   local node
@@ -338,12 +359,7 @@ run_cmd_str() {
   fi
 }
 
-on_err() {
-  local rc=$?
-  p_err "Command failed (rc=$rc) at line $1: $2"
-  exit "$rc"
-}
-trap 'on_err "${LINENO}" "${BASH_COMMAND}"' ERR
+
 
 require_root() {
   p_info "Checking root privileges"
@@ -509,7 +525,22 @@ require_nfs_common() {
 
 storage_exists() {
   local sid="$1"
-  pvesm status 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$sid"
+  _pvesm_status_cached | awk 'NR>1 {print $1}' | grep -qx "$sid"
+}
+
+# Return cached pvesm status output, populating on first call.
+_pvesm_status_cached() {
+  if [[ "$_PVESM_STATUS_READY" -eq 0 ]]; then
+    _PVESM_STATUS_CACHE="$(pvesm status 2>/dev/null || true)"
+    _PVESM_STATUS_READY=1
+  fi
+  printf '%s\n' "$_PVESM_STATUS_CACHE"
+}
+
+# Invalidate the cache after any pvesm add/remove operation.
+_pvesm_invalidate_cache() {
+  _PVESM_STATUS_CACHE=""
+  _PVESM_STATUS_READY=0
 }
 
 ensure_fstab_writable() {
@@ -562,7 +593,7 @@ get_system_disk() {
       # Fallback: strip partition number manually from the PV device
       base="$(basename "$pv")"
       # Handle NVMe (nvme0n1p3 -> nvme0n1) and SATA (sda3 -> sda)
-      disk="$(echo "$base" | sed 's|p\?[0-9]\+$||')"
+      disk="$(basename "$(get_base_disk "$base")")"  
     fi
     [[ -n "$disk" ]] || die "Unable to determine base disk for PV '$pv'."
     # lsblk returns name without /dev/, so add it
@@ -571,15 +602,9 @@ get_system_disk() {
   fi
 
   # Fallback: root on partition
-  # lsblk -no PKNAME returns the parent disk name without /dev/ prefix
-  disk="$(lsblk -no PKNAME "$src" 2>/dev/null | tail -1)"
-  if [[ -z "$disk" ]]; then
-    # Fallback: strip partition number manually
-    base="$(basename "$src")"
-    disk="$(echo "$base" | sed 's|p\?[0-9]\+$||')"
-  fi
+  disk="$(basename "$(get_base_disk "$src")")"
   [[ -n "$disk" ]] || die "Unable to determine base disk for root source '$src'."
-  # lsblk returns name without /dev/, so add it
+  # get_base_disk returns /dev/diskname; strip the /dev/ prefix since we add it below
   printf '%s' "/dev/$disk"
 }
 
@@ -589,6 +614,26 @@ system_disk() {
   disk="$(get_system_disk)"
   p_ok "System disk identified: $disk"
   printf '%s' "$disk"
+}
+
+# Strip partition suffix from a device path, returning the base disk path.
+# Handles NVMe (nvme0n1p3 -> /dev/nvme0n1), SATA (sda3 -> /dev/sda),
+# and MMC (mmcblk0p2 -> /dev/mmcblk0).
+get_base_disk() {
+  local dev="$1"
+  # Ensure /dev/ prefix is present
+  [[ "$dev" == /dev/* ]] || dev="/dev/$dev"
+  # Use lsblk parent lookup first (most reliable)
+  local parent
+  parent="$(lsblk -no PKNAME "$dev" 2>/dev/null | tail -1)"
+  if [[ -n "$parent" ]]; then
+    printf '%s' "/dev/$parent"
+    return 0
+  fi
+  # Fallback: strip partition suffix via regex
+  local base
+  base="$(basename "$dev" | sed 's|p\?[0-9]\+$||')"
+  printf '%s' "/dev/$base"
 }
 
 get_first_partition() {
@@ -645,7 +690,7 @@ next_letter() {
   done <<< "$vg_list"
   
   # Combine both sources
-  sid_names="$(pvesm status 2>/dev/null | awk -v t="$typ" -v h="$hd" 'NR>1 && $1 ~ ("^" t "-" h "[A-Z]$") {print $1}' || true)"
+  sid_names="$(_pvesm_status_cached | awk -v t="$typ" -v h="$hd" 'NR>1 && $1 ~ ("^" t "-" h "[A-Z]$") {print $1}' || true)"
   used="${used}${vg_names}${sid_names}"
   
   letters=""
@@ -705,6 +750,7 @@ ensure_pvesm_storage() {
   fi
 
   run_cmd "Adding Proxmox storage '$sid' at $path" pvesm add dir "$sid" --path "$path" --content "$content" --is_mountpoint 1 --nodes "$node" --shared 0
+  _pvesm_invalidate_cache
 }
 
 ensure_pvesm_lvm_storage() {
@@ -721,6 +767,7 @@ ensure_pvesm_lvm_storage() {
   fi
 
   run_cmd "Adding Proxmox LVM storage '$sid' (VG: $vgname)" pvesm add lvm "$sid" --vgname "$vgname" --content "$content" --nodes "$node"
+  _pvesm_invalidate_cache
 }
 
 ensure_pvesm_lvm_thin_storage() {
@@ -737,6 +784,7 @@ ensure_pvesm_lvm_thin_storage() {
   fi
 
   run_cmd "Adding Proxmox LVM-Thin storage '$sid' (VG: $vgname, pool: $thinpool)" pvesm add lvmthin "$sid" --vgname "$vgname" --thinpool "$thinpool" --content "$content" --nodes "$node"
+  _pvesm_invalidate_cache
 }
 
 ensure_pvesm_nfs_storage() {
@@ -754,6 +802,7 @@ ensure_pvesm_nfs_storage() {
 
   run_cmd "Adding Proxmox NFS storage '$sid' (server: $server, export: $export_path)" \
     pvesm add nfs "$sid" --server "$server" --export "$export_path" --content "$content" --options "$options" --nodes "$node"
+  _pvesm_invalidate_cache
 }
 
 partition_number_from_device() {
@@ -896,6 +945,7 @@ reclaim_system_disk() {
   p_info "Checking for Proxmox storage 'local-lvm'"
   if storage_exists "local-lvm"; then
     run_cmd "Removing Proxmox storage 'local-lvm'" pvesm remove local-lvm
+    _pvesm_invalidate_cache
   else
     p_ok "Proxmox storage 'local-lvm' not present (already removed)"
   fi
@@ -955,6 +1005,7 @@ reclaim_system_disk() {
   fi
 
   run_cmd "Creating system-disk thin pool pve/$thinpool (${thin_size_mb}M)" lvcreate -L "${thin_size_mb}M" -T "pve/$thinpool"
+  lvs "pve/$thinpool" >/dev/null 2>&1 || die "System thin pool creation succeeded but pve/$thinpool not visible to lvs"
   ensure_pvesm_lvm_thin_storage "$sid" "pve" "$thinpool"
   p_ok "System disk storage created: $sid (VG pve, thin pool $thinpool)"
 }
@@ -1284,12 +1335,14 @@ provision_disk_lvm() {
   if ! run_cmd "Creating LVM physical volume on $part" pvcreate -ff -y "$part"; then
     return 1
   fi
+  pvs "$part" >/dev/null 2>&1 || die "PV creation succeeded but $part not visible to pvs - check kernel/udev state"
 
   # Create VG with label as VG name
   vgname="$label"
   if ! run_cmd "Creating LVM volume group $vgname" vgcreate "$vgname" "$part"; then
     return 1
   fi
+  vgs "$vgname" >/dev/null 2>&1 || die "VG creation succeeded but $vgname not visible to vgs"
 
   ensure_pvesm_lvm_storage "$label" "$vgname"
   p_ok "Proxmox will create LVs within VG $vgname as needed"
@@ -1324,12 +1377,14 @@ provision_disk_lvm_thin() {
   if ! run_cmd "Creating LVM physical volume on $part" pvcreate -ff -y "$part"; then
     return 1
   fi
+  pvs "$part" >/dev/null 2>&1 || die "PV creation succeeded but $part not visible to pvs - check kernel/udev state"
 
   # Create VG with label as VG name
   vgname="$label"
   if ! run_cmd "Creating LVM volume group $vgname" vgcreate "$vgname" "$part"; then
     return 1
   fi
+  vgs "$vgname" >/dev/null 2>&1 || die "VG creation succeeded but $vgname not visible to vgs"
 
   # Create thin pool (use 95% of VG space, leaving some for metadata overhead)
   # Get VG size in KB
@@ -1351,6 +1406,7 @@ provision_disk_lvm_thin() {
     lvcreate -L "${thin_size_kb}K" -T "$vgname/$thinpool"; then
     return 1
   fi
+  lvs "$vgname/$thinpool" >/dev/null 2>&1 || die "Thin pool creation succeeded but $vgname/$thinpool not visible to lvs"
 
   ensure_pvesm_lvm_thin_storage "$label" "$vgname" "$thinpool"
   p_ok "Proxmox will create thin LVs within $vgname/$thinpool as needed"
@@ -1366,7 +1422,7 @@ provision_nfs() {
   
   # Find next available NFS letter for this node
   local used letters
-  used="$(pvesm status 2>/dev/null | awk 'NR>1 && $1 ~ /^NFS-'$hd'[A-Z]$/ {print $1}' || true)"
+  used="$(_pvesm_status_cached | awk 'NR>1 && $1 ~ /^NFS-'$hd'[A-Z]$/ {print $1}' || true)"
   letters=""
   for L in $used; do
     letters+="${L: -1}"
@@ -1388,23 +1444,34 @@ provision_nfs() {
   p_info "Proxmox will manage the mount at /mnt/pve/$sid"
 
   # Verify NFS server is reachable (only for NFSv3 - showmount doesn't work with NFSv4)
-  if [[ "$options" =~ vers=3 ]] && command -v showmount >/dev/null 2>&1; then
-    p_info "Checking NFSv3 server connectivity"
-    if timeout 10 showmount -e "$server" >/dev/null 2>&1; then
-      p_ok "NFS server $server is reachable"
-      # Check if export exists
-      if ! showmount -e "$server" 2>/dev/null | grep -q "^${export_path} "; then
-        p_warn "Export path $export_path not found in showmount output. Will attempt anyway."
+  # Pre-flight: probe NFS port 2049 via TCP. Works for both NFSv3 and NFSv4.
+  # Uses Bash built-in /dev/tcp so no extra tools required.
+  p_info "Probing NFS server $server port 2049 (TCP)"
+  if timeout 5 bash -c "echo >/dev/tcp/${server}/2049" 2>/dev/null; then
+    p_ok "NFS server $server is reachable on port 2049"
+    # NFSv3 only: also validate the export path via showmount
+    if [[ "$options" =~ vers=3 ]] && command -v showmount >/dev/null 2>&1; then
+      if showmount -e "$server" 2>/dev/null | grep -q "^${export_path}[[:space:]]"; then
+        p_ok "Export path $export_path is listed by NFS server"
       else
-        p_ok "Export path $export_path is available"
+        p_warn "Export path $export_path not found in showmount output. Will attempt anyway."
+        p_warn "  Check on the server: showmount -e $server"
       fi
-    else
-      p_warn "Cannot contact NFS server $server (showmount timeout). Will attempt anyway."
     fi
-  elif [[ "$options" =~ vers=4 ]]; then
-    p_info "Using NFSv4 (showmount check not applicable)"
   else
-    p_info "Skipping NFS connectivity pre-check (will verify after mount)"
+    p_warn "Cannot reach NFS server $server on port 2049 (TCP timeout)"
+    p_warn "Possible causes:"
+    p_warn "  - Server is unreachable or offline"
+    p_warn "  - Firewall blocking TCP port 2049"
+    p_warn "  - Wrong server address: $server"
+    if [[ "$FORCE" -eq 0 && "$WHATIF" -eq 0 ]]; then
+      printf '%b' "${C_WARN}[?]${NC} Server unreachable. Attempt to add NFS storage anyway? [y/N]: "
+      local _ans
+      read -r _ans
+      [[ "$_ans" =~ ^[Yy]$ ]] || { p_warn "Aborted by user."; return 1; }
+    else
+      p_warn "Force/whatif mode: proceeding despite unreachable server"
+    fi
   fi
 
   # Let Proxmox handle all mounting - it will create /mnt/pve/$sid and manage fstab
@@ -1423,6 +1490,7 @@ provision_nfs() {
     if storage_exists "$sid" 2>/dev/null; then
       p_info "Cleaning up partial storage configuration"
       pvesm remove "$sid" 2>/dev/null || true
+      _pvesm_invalidate_cache
     fi
     return 1
   fi
@@ -1443,6 +1511,7 @@ provision_nfs() {
       # Cleanup
       p_info "Removing non-functional storage configuration"
       pvesm remove "$sid" 2>/dev/null || true
+      _pvesm_invalidate_cache
       return 1
     fi
   fi
@@ -1450,11 +1519,142 @@ provision_nfs() {
   p_ok "Provisioned NFS storage: $sid"
 }
 
+# Return "HDD" for rotational disks, "SSD" for everything else (NVMe, SATA SSD).
+get_disk_type_prefix() {
+  local dev="$1" rot
+  rot="$(disk_is_rotational "$dev")"
+  if [[ "$rot" == "1" ]]; then
+    printf '%s' "HDD"
+  else
+    printf '%s' "SSD"
+  fi
+}
+
+# Attempt to heal an already-provisioned disk's mount/storage config.
+# Returns 0 if fully healed (caller should skip to next disk).
+# Returns 1 if heal failed (caller should fall through to full re-provision).
+heal_provisioned_disk() {
+  local label="$1" part="$2"
+
+  case "$STORAGE_TYPE" in
+    dir)
+      ensure_mount "$label" "$part"
+      ensure_pvesm_storage "$label" "/mnt/disks/$label"
+      return 0
+      ;;
+    lvm|lvm-thin)
+      if ! vgs "$label" >/dev/null 2>&1; then
+        p_warn "Disk labeled $label but VG not found; will re-provision"
+        return 1
+      fi
+      if [[ "$STORAGE_TYPE" == "lvm-thin" ]]; then
+        local hd_digit thinpool
+        hd_digit="$(get_hostname_digit)"
+        thinpool="pool-${hd_digit}${label: -1}"
+        if ! lvs "$label/$thinpool" >/dev/null 2>&1; then
+          p_warn "Disk labeled $label but thin pool $thinpool not found; will re-provision"
+          return 1
+        fi
+        ensure_pvesm_lvm_thin_storage "$label" "$label" "$thinpool"
+      else
+        ensure_pvesm_lvm_storage "$label" "$label"
+      fi
+      return 0
+      ;;
+  esac
+  return 0
+}
+
+# If a Proxmox storage entry for 'label' exists with a different type than
+# the currently-requested $STORAGE_TYPE, remove the stale entry so it can
+# be recreated with the correct type.
+remove_stale_storage_if_type_mismatch() {
+  local label="$1"
+  storage_exists "$label" || return 0
+
+  local existing_type expected_type
+  existing_type="$(_pvesm_status_cached | awk -v sid="$label" 'NR>1 && $1==sid {print $2; exit}')"
+  [[ -n "$existing_type" ]] || return 0
+
+  expected_type="$STORAGE_TYPE"
+  [[ "$expected_type" == "lvm-thin" ]] && expected_type="lvmthin"
+  [[ "$existing_type" == "$expected_type" ]] && return 0
+
+  p_warn "Removing old Proxmox storage '$label' (type: $existing_type, will recreate as: $STORAGE_TYPE)"
+  run_cmd "Removing Proxmox storage '$label'" pvesm remove "$label"
+  _pvesm_invalidate_cache
+}
+
+# Process a single data disk: determine its label, heal or provision it.
+provision_single_disk() {
+  local d="$1" hd="$2"
+
+  p_info "Processing disk: $d"
+
+  local typ rot
+  typ="$(get_disk_type_prefix "$d")"
+  rot="$(disk_is_rotational "$d")"
+  p_ok "Disk type determined: $typ (rotational=$rot)"
+
+  local part existing_label label
+  part="$(get_first_partition "$d" || true)"
+  p_info "Checking for existing label on ${part:-$d}"
+  existing_label=""
+  if [[ -n "$part" ]]; then
+    existing_label="$(blkid -o value -s LABEL "$part" 2>/dev/null || true)"
+  fi
+
+  local expected_pattern="^${typ}-${hd}[A-Z]$"
+
+  if [[ -n "$existing_label" && "$existing_label" =~ $expected_pattern ]]; then
+    label="$existing_label"
+    if [[ $ALL -eq 0 && ${#ONLY_FILTERS[@]} -eq 0 ]]; then
+      p_ok "Disk $d already provisioned as $label; skipping (use --all or --only to re-provision)"
+      if heal_provisioned_disk "$label" "$part"; then
+        return 0  # Healed successfully; skip to next disk
+      fi
+      # Heal failed (e.g. broken VG): fall through to fresh provision with new label
+      p_info "Heal failed for $label; re-provisioning with a fresh label"
+    else
+      p_warn "Disk $d already provisioned as $label; will DESTROY and re-provision"
+    fi
+  fi
+
+  # Assign a fresh label for new provisioning (or after a failed heal)
+  local letter
+  letter="$(next_letter "$typ" "$hd")"
+  label="${typ}-${hd}${letter}"
+
+  remove_stale_storage_if_type_mismatch "$label"
+
+  case "$STORAGE_TYPE" in
+    dir)      p_warn "Disk $d will be DESTROYED and provisioned as $label (dir: GPT, ext4)" ;;
+    lvm)      p_warn "Disk $d will be DESTROYED and provisioned as $label (LVM: thick volumes)" ;;
+    lvm-thin) p_warn "Disk $d will be DESTROYED and provisioned as $label (LVM-Thin: thin pool)" ;;
+  esac
+
+  case "$STORAGE_TYPE" in
+    dir)
+      provision_disk_dir "$d" "$label" || { p_err "Failed to provision $d as directory storage"; return 1; }
+      ;;
+    lvm)
+      provision_disk_lvm "$d" "$label" || { p_err "Failed to provision $d as LVM storage"; return 1; }
+      ;;
+    lvm-thin)
+      provision_disk_lvm_thin "$d" "$label" || { p_err "Failed to provision $d as LVM-Thin storage"; return 1; }
+      ;;
+    *)
+      die "Unknown storage type: $STORAGE_TYPE"
+      ;;
+  esac
+
+  p_ok "Provisioned $d -> $label ($STORAGE_TYPE)"
+}
+
 provision_data_disks() {
   local sysdisk="$1"
   local hd="$2"
 
-  # Validate storage name filters before proceeding
   validate_storage_filters "provision" "$sysdisk"
 
   if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
@@ -1468,155 +1668,12 @@ provision_data_disks() {
   [[ "${#disks[@]}" -gt 0 ]] || die "No disks detected."
   p_ok "Found ${#disks[@]} disk(s)"
 
+  local d
   for d in "${disks[@]}"; do
     [[ "$d" == "$sysdisk" ]] && continue
-
-    p_info "Processing disk: $d"
-    
-    local rot typ base
-    rot="$(disk_is_rotational "$d")"
-    base="$(basename "$d")"
-    
-    # Determine storage type prefix
-    if [[ "$rot" == "1" ]]; then
-      typ="HDD"
-    elif [[ "$base" =~ ^nvme[0-9]+n[0-9]+$ ]]; then
-      # NVMe drives use SSD prefix for storage naming
-      typ="SSD"
-    else
-      typ="SSD"
-    fi
-    p_ok "Disk type determined: $typ (rotational=$rot)"  
-
-    local part existing_label expected_pattern label
-    part="$(get_first_partition "$d" || true)"
-
-    p_info "Checking for existing label on ${part:-$d}"
-    existing_label=""
-    if [[ -n "$part" ]]; then
-      existing_label="$(blkid -o value -s LABEL "$part" 2>/dev/null || true)"
-    fi
-    expected_pattern="^${typ}-${hd}[A-Z]$"
-
-    # If already provisioned in our scheme
-    if [[ -n "$existing_label" && "$existing_label" =~ $expected_pattern ]]; then
-      label="$existing_label"
-      # Skip if not using --all or --only (safe default: only provision new devices)
-      if [[ $ALL -eq 0 && ${#ONLY_FILTERS[@]} -eq 0 ]]; then
-        p_ok "Disk $d already provisioned as $label; skipping (use --all or --only to re-provision)"
-        # Heal/ensure configuration based on storage type
-        case "$STORAGE_TYPE" in
-          dir)
-            ensure_mount "$label" "$part"
-            ensure_pvesm_storage "$label" "/mnt/disks/$label"
-            ;;
-          lvm|lvm-thin)
-            # For LVM, just ensure Proxmox storage entry exists
-            # VG should already exist if disk is labeled
-            if vgs "$label" >/dev/null 2>&1; then
-              if [[ "$STORAGE_TYPE" == "lvm-thin" ]]; then
-                # Verify thin pool exists
-                local hd_digit
-                hd_digit="$(get_hostname_digit)"
-                local thinpool="pool-${hd_digit}${label: -1}"
-                if lvs "$label/$thinpool" >/dev/null 2>&1; then
-                  ensure_pvesm_lvm_thin_storage "$label" "$label" "$thinpool"
-                else
-                  p_warn "Disk labeled $label but thin pool $thinpool not found; will re-provision"
-                  # Don't continue - fall through to re-provision below
-                fi
-              else
-                ensure_pvesm_lvm_storage "$label" "$label"
-              fi
-            else
-              p_warn "Disk labeled $label but VG not found; will re-provision"
-              # Don't continue - fall through to re-provision below
-            fi
-            
-            # Only continue (skip re-provisioning) if we successfully healed
-            if vgs "$label" >/dev/null 2>&1; then
-              if [[ "$STORAGE_TYPE" == "lvm-thin" ]]; then
-                local hd_digit
-                hd_digit="$(get_hostname_digit)"
-                local thinpool="pool-${hd_digit}${label: -1}"
-                if lvs "$label/$thinpool" >/dev/null 2>&1; then
-                  continue
-                fi
-              else
-                continue
-              fi
-            fi
-            ;;
-        esac
-        continue
-      fi
-      # With --all or --only, destroy and re-provision
-      p_warn "Disk $d already provisioned as $label; will DESTROY and re-provision"
-    fi
-
-    # DESTROY + (re)provision
-    local letter
-    letter="$(next_letter "$typ" "$hd")"
-    label="${typ}-${hd}${letter}"
-
-    # Check if storage exists and remove if type mismatch
-    if storage_exists "$label"; then
-      local existing_type
-      existing_type="$(pvesm status 2>/dev/null | awk -v sid="$label" 'NR>1 && $1==sid {print $2; exit}')"
-      if [[ -n "$existing_type" ]]; then
-        # Map storage types for comparison
-        local expected_type="$STORAGE_TYPE"
-        [[ "$expected_type" == "lvm-thin" ]] && expected_type="lvmthin"
-        
-        if [[ "$existing_type" != "$expected_type" ]]; then
-          p_warn "Removing old Proxmox storage '$label' (type: $existing_type, will recreate as: $STORAGE_TYPE)"
-          run_cmd "Removing Proxmox storage '$label'" pvesm remove "$label"
-        fi
-      fi
-    fi
-
-    # Storage-type-specific warning
-    case "$STORAGE_TYPE" in
-      dir)
-        p_warn "Disk $d will be DESTROYED and provisioned as $label (dir: GPT, ext4)"
-        ;;
-      lvm)
-        p_warn "Disk $d will be DESTROYED and provisioned as $label (LVM: thick volumes)"
-        ;;
-      lvm-thin)
-        p_warn "Disk $d will be DESTROYED and provisioned as $label (LVM-Thin: thin pool)"
-        ;;
-    esac
-
-    # Call appropriate provisioning function based on storage type
-    case "$STORAGE_TYPE" in
-      dir)
-        if ! provision_disk_dir "$d" "$label"; then
-          p_err "Failed to provision $d as directory storage"
-          continue
-        fi
-        ;;
-      lvm)
-        if ! provision_disk_lvm "$d" "$label"; then
-          p_err "Failed to provision $d as LVM storage"
-          continue
-        fi
-        ;;
-      lvm-thin)
-        if ! provision_disk_lvm_thin "$d" "$label"; then
-          p_err "Failed to provision $d as LVM-Thin storage"
-          continue
-        fi
-        ;;
-      *)
-        die "Unknown storage type: $STORAGE_TYPE"
-        ;;
-    esac
-
-    p_ok "Provisioned $d -> $label ($STORAGE_TYPE)"
+    provision_single_disk "$d" "$hd" || true
   done
-  
-  # Refresh GRUB device map after changing disk topology
+
   refresh_grub_device_map "$FORCE"
 }
 
@@ -1669,7 +1726,7 @@ validate_boot_disk_detection() {
     
     # Strip partition from PV to get disk
     local pv_disk
-    pv_disk="$(echo "$pv" | sed 's|p\?[0-9]\+$||')"
+    pv_disk="$(get_base_disk "$pv")"
     
     # Verify it matches our boot disk
     if [[ "$pv_disk" != "$boot_disk" ]]; then
@@ -1678,7 +1735,7 @@ validate_boot_disk_detection() {
   else
     # Direct partition - strip partition number and compare
     local root_disk
-    root_disk="$(echo "$root_dev" | sed 's|p\?[0-9]\+$||')"
+    root_disk="$(get_base_disk "$root_dev")"
     if [[ "$root_disk" != "$boot_disk" ]]; then
       return 1
     fi
@@ -1934,7 +1991,8 @@ list_storage_usage() {
 
 smartctl_safe() {
   local dev="$1"
-  smartctl -a "$dev" 2>/dev/null || true
+  # Timeout guards against drives that block on ATA passthrough (e.g. bad USB bridges).
+  timeout 15 smartctl -a "$dev" 2>/dev/null || true
 }
 
 smart_first_line() {
@@ -2045,55 +2103,56 @@ smart_life_remaining() {
   fi
 }
 
-show_available_storage() {
-  local sysdisk
-  sysdisk="$(get_system_disk)"
-  
-  # Build device-to-storage mapping first
-  declare -A device_storage_map
-  
-  # Parse storage config to get all non-system storage
+# Build a device-name -> storage-id mapping from the current Proxmox storage
+# config. The result is written into the caller's associative array whose name
+# is passed as the first argument (passed by reference via local -n).
+#
+# Keys are bare device names without /dev/ (e.g. "nvme0n1", "sda") so they
+# can be used directly against lsblk NAME output.
+#
+# Usage:
+#   declare -A my_map
+#   build_device_storage_map my_map
+build_device_storage_map() {
+  local -n _map_ref="$1"
+
   while IFS='|' read -r type sid path nodes shared; do
     [[ -n "$sid" ]] || continue
     [[ "$sid" == "local" || "$sid" == "local-lvm" ]] && continue
-    
-    # Handle different storage types
+
     case "$type" in
       dir)
-        # Directory storage - use mount point
-        if [[ -z "$path" ]]; then
-          continue
-        fi
-        
-        local mount_device base_device
-        mount_device=$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || echo "")
-        
-        if [[ -n "$mount_device" ]]; then
-          # Handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
-          base_device=$(echo "$mount_device" | sed 's|/dev/||; s|p\?[0-9]\+$||')
-          if [[ -n "$base_device" ]]; then
-            device_storage_map["$base_device"]="$sid"
-          fi
+        [[ -z "$path" ]] && continue
+        local _md
+        _md="$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || true)"
+        if [[ -n "$_md" ]]; then
+          local _bd
+          _bd="$(basename "$(get_base_disk "$_md")")"
+          [[ -n "$_bd" ]] && _map_ref["$_bd"]="$sid"
         fi
         ;;
       lvm|lvmthin)
-        # LVM storage - find PV for VG
-        # VG name should match storage ID for our naming scheme
-        local pv_device base_device
-        pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$sid" '$2==vg {print $1; exit}')
-        if [[ -n "$pv_device" ]]; then
-          # Handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
-          base_device=$(echo "$pv_device" | sed 's|/dev/||; s|p\?[0-9]\+$||')
-          if [[ -n "$base_device" ]]; then
-            device_storage_map["$base_device"]="$sid"
-          fi
+        local _pv
+        _pv="$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$sid" '$2==vg {print $1; exit}')"
+        if [[ -n "$_pv" ]]; then
+          local _bd
+          _bd="$(basename "$(get_base_disk "$_pv")")"
+          [[ -n "$_bd" ]] && _map_ref["$_bd"]="$sid"
         fi
         ;;
       nfs)
-        # NFS storage - doesn't map to a device
+        # NFS storage - no physical device to map
         ;;
     esac
   done < <(parse_storage_cfg)
+}
+
+show_available_storage() {
+  local sysdisk
+  sysdisk="$(get_system_disk)"
+
+  declare -A device_storage_map
+  build_device_storage_map device_storage_map
   
   # Display device table with storage status
   echo "╔════════════════════════════════════════════════════════════════════════════════╗"
@@ -2196,10 +2255,9 @@ show_storage_mapping() {
           continue
         fi
         
-        # Get base device - handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
         local base_device size model
-        base_device=$(echo "$mount_device" | sed 's|p\?[0-9]\+$||')
-        
+        base_device="$(get_base_disk "$mount_device")"
+
         if [[ -n "$base_device" && -b "$base_device" ]]; then
           size=$(lsblk -ndo SIZE "$base_device" 2>/dev/null || echo "?")
           model=$(lsblk -ndo MODEL "$base_device" 2>/dev/null | xargs || echo "Unknown")
@@ -2217,8 +2275,7 @@ show_storage_mapping() {
         pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$sid" '$2==vg {print $1; exit}')
         
         if [[ -n "$pv_device" ]]; then
-          # Handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
-          base_device=$(echo "$pv_device" | sed 's|p\?[0-9]\+$||')
+          base_device="$(get_base_disk "$pv_device")"
           local size model
           size=$(lsblk -ndo SIZE "$base_device" 2>/dev/null || echo "?")
           model=$(lsblk -ndo MODEL "$base_device" 2>/dev/null | xargs || echo "Unknown")
@@ -2262,50 +2319,9 @@ show_storage_mapping() {
 show_available_for_provisioning() {
   local sysdisk
   sysdisk="$(get_system_disk)"
-  
-  # Build device-to-storage mapping (same logic as show_available_storage)
+
   declare -A device_storage_map
-  while IFS='|' read -r type sid path nodes shared; do
-    [[ -n "$sid" ]] || continue
-    [[ "$sid" == "local" || "$sid" == "local-lvm" ]] && continue
-    
-    # Handle different storage types
-    case "$type" in
-      dir)
-        # Directory storage - use mount point
-        if [[ -z "$path" ]]; then
-          continue
-        fi
-        
-        local mount_device base_device
-        mount_device=$(findmnt -n -o SOURCE --target "$path" 2>/dev/null || echo "")
-        
-        if [[ -n "$mount_device" ]]; then
-          # Handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
-          base_device=$(echo "$mount_device" | sed 's|/dev/||; s|p\?[0-9]\+$||')
-          if [[ -n "$base_device" ]]; then
-            device_storage_map["$base_device"]="$sid"
-          fi
-        fi
-        ;;
-      lvm|lvmthin)
-        # LVM storage - find PV for VG
-        # VG name should match storage ID for our naming scheme
-        local pv_device base_device
-        pv_device=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v vg="$sid" '$2==vg {print $1; exit}')
-        if [[ -n "$pv_device" ]]; then
-          # Handle both NVMe (nvme0n1p1 -> nvme0n1) and SATA (sda1 -> sda)
-          base_device=$(echo "$pv_device" | sed 's|/dev/||; s|p\?[0-9]\+$||')
-          if [[ -n "$base_device" ]]; then
-            device_storage_map["$base_device"]="$sid"
-          fi
-        fi
-        ;;
-      nfs)
-        # NFS storage - doesn't map to a device
-        ;;
-    esac
-  done < <(parse_storage_cfg)
+  build_device_storage_map device_storage_map
   
   # Find unallocated devices
   local available_devices=()
@@ -2553,6 +2569,7 @@ deprovision_storage_entries() {
 
     if storage_exists "$sid"; then
       run_cmd "Removing Proxmox storage '$sid'" pvesm remove "$sid"
+      _pvesm_invalidate_cache
     fi
     if [[ -n "$path" ]]; then
       if findmnt -n "$path" >/dev/null 2>&1; then
