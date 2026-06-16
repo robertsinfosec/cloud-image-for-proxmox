@@ -972,6 +972,13 @@ reclaim_system_disk() {
     p_ok "LV pve/data_tdata not present (already removed)"
   fi
 
+  # If storage.cfg was cleared manually, rehydrate it from the existing pve
+  # thin pools before trying to reuse or create any system-disk SSD entries.
+  if ensure_system_disk_storage_entries_from_pve_lvs "$hd"; then
+    p_info "System-disk storage entries reconciled from existing pve thin pools"
+    return 0
+  fi
+
   # If this host already has a pve-backed SSD-<digit><letter> storage entry,
   # reuse it instead of minting a new letter every time reclaim runs.
   if existing_system_storage="$(find_existing_system_disk_storage "$hd" 2>/dev/null || true)"; [[ -n "$existing_system_storage" ]]; then
@@ -1914,6 +1921,30 @@ cleanup_duplicate_system_disk_storage_entries() {
     p_warn "Removing stale system-disk storage '$sid' (keeping '$keep_sid')"
     run_cmd "Removing stale system-disk storage '$sid'" pvesm remove "$sid"
   done < <(parse_storage_cfg)
+}
+
+ensure_system_disk_storage_entries_from_pve_lvs() {
+  local hd="$1"
+  local pool_name lv_attr sid
+  local found=0
+
+  while read -r pool_name lv_attr; do
+    [[ -n "$pool_name" ]] || continue
+    [[ "$lv_attr" =~ ^t ]] || continue
+    [[ "$pool_name" =~ ^pool-${hd}[A-Z]$ ]] || continue
+
+    found=1
+    sid="SSD-${hd}${pool_name: -1}"
+    if storage_exists "$sid"; then
+      p_ok "System-disk storage already present: $sid -> pve/$pool_name"
+    else
+      p_info "Recreating missing system-disk storage: $sid -> pve/$pool_name"
+      ensure_pvesm_lvm_thin_storage "$sid" "pve" "$pool_name"
+    fi
+  done < <(lvs --noheadings -o lv_name,lv_attr pve 2>/dev/null | awk 'NF{print $1, $2}')
+
+  [[ "$found" -eq 1 ]] || return 1
+  return 0
 }
 
 node_in_list() {
