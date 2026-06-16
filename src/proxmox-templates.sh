@@ -168,6 +168,23 @@ cleanup_build_files() {
     fi
 }
 
+is_safe_cache_dir() {
+    local dir="$1"
+    [[ -n "$dir" ]] || return 1
+
+    local resolved
+    resolved="$(readlink -f "$dir" 2>/dev/null || echo "$dir")"
+    [[ -n "$resolved" ]] || return 1
+
+    case "$resolved" in
+        /|/root|/etc|/usr|/var|/home|/opt|/boot)
+            return 1
+            ;;
+    esac
+
+    return 0
+}
+
 check_command() {
     local cmd=$1
     local help_text=$2
@@ -201,7 +218,7 @@ check_yq() {
             exit 1
         fi
 
-        local version="v4.2.0"
+        local version="v4.44.3"
         local platform
         case "$(uname -m)" in
             x86_64) platform="linux_amd64" ;;
@@ -935,8 +952,12 @@ if [[ "$CLEAN_CACHE" == "true" ]]; then
     fi
     
     if [[ -d "$CACHE_DIR" ]]; then
+        if ! is_safe_cache_dir "$CACHE_DIR"; then
+            echo "ERROR: Refusing unsafe cache cleanup path: $CACHE_DIR"
+            exit 1
+        fi
         setStatus "Cleaning cache directory: $CACHE_DIR" "*"
-        rm -rf "$CACHE_DIR"/*
+        find "$CACHE_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
         setStatus "Cache cleaned successfully" "s"
     else
         setStatus "Cache directory does not exist: $CACHE_DIR" "q"
@@ -1262,11 +1283,16 @@ if [[ "$STATUS" == "true" ]]; then
         done
     done
     
-    # Get all VMs from Proxmox (focusing on templates)
+    # Get all VMs from Proxmox and mark which VMIDs are templates.
     PROXMOX_VMS=()
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
-        PROXMOX_VMS+=("$line")
+        IFS='|' read -r vmid name status <<< "$line"
+        template_flag="0"
+        if qm config "$vmid" 2>/dev/null | grep -q '^template:[[:space:]]*1$'; then
+            template_flag="1"
+        fi
+        PROXMOX_VMS+=("${vmid}|${name}|${status}|${template_flag}")
     done < <(qm list 2>/dev/null | tail -n +2 | awk '{print $1"|"$2"|"$3}' || true)
     
     # Build lookup maps
@@ -1279,8 +1305,8 @@ if [[ "$STATUS" == "true" ]]; then
     done
     
     for entry in "${PROXMOX_VMS[@]}"; do
-        IFS='|' read -r vmid name status <<< "$entry"
-        PROXMOX_MAP["$vmid"]="${name}|${status}"
+        IFS='|' read -r vmid name status template_flag <<< "$entry"
+        PROXMOX_MAP["$vmid"]="${name}|${status}|${template_flag}"
     done
     
     # Display results
@@ -1304,8 +1330,10 @@ if [[ "$STATUS" == "true" ]]; then
         fi
         
         if [[ -n "${PROXMOX_MAP[$vmid]:-}" ]]; then
-            IFS='|' read -r actual_name status <<< "${PROXMOX_MAP[$vmid]}"
-            if [[ "$status" == "running" ]]; then
+            IFS='|' read -r actual_name status template_flag <<< "${PROXMOX_MAP[$vmid]}"
+            if [[ "$template_flag" != "1" ]]; then
+                echo -e "  ${Yellow}⚠${NC} VMID ${vmid}: ${distro} ${version} (${release}) - ${Yellow}EXISTS BUT NOT A TEMPLATE${NC}"
+            elif [[ "$status" == "running" ]]; then
                 echo -e "  ${Yellow}⚠${NC} VMID ${vmid}: ${distro} ${version} (${release}) - ${Yellow}RUNNING (should be stopped template)${NC}"
             elif [[ "$actual_name" != "$expected_name" ]]; then
                 echo -e "  ${Yellow}⚠${NC} VMID ${vmid}: ${distro} ${version} (${release}) - ${Yellow}NAME MISMATCH${NC}"
@@ -1321,13 +1349,14 @@ if [[ "$STATUS" == "true" ]]; then
         fi
     done
     
-    # Check for extra VMs in Proxmox that aren't configured
+    # Check for extra templates in Proxmox that aren't configured.
     echo ""
-    echo -e "${White}Extra VMs in Proxmox (not in config):${NC}"
+    echo -e "${White}Extra templates in Proxmox (not in config):${NC}"
     FOUND_EXTRA=false
     for vmid in "${!PROXMOX_MAP[@]}"; do
         if [[ -z "${CONFIGURED_MAP[$vmid]:-}" ]]; then
-            IFS='|' read -r name status <<< "${PROXMOX_MAP[$vmid]}"
+            IFS='|' read -r name status template_flag <<< "${PROXMOX_MAP[$vmid]}"
+            [[ "$template_flag" == "1" ]] || continue
             echo -e "  ${Yellow}⚠${NC} VMID ${vmid}: ${name} (${status})"
             EXTRA_COUNT=$((EXTRA_COUNT + 1))
             FOUND_EXTRA=true
@@ -1440,9 +1469,9 @@ for build_file in "${BUILD_FILES[@]}"; do
             fi
         fi
 
-        PLANNED_BUILDS+=("${BUILD_DISTRO}|${BUILD_VERSION}|${BUILD_RELEASE}|${BUILD_VMID}|${BUILD_STORAGE}")
+        PLANNED_BUILDS+=("${build_file}|${i}|${BUILD_DISTRO}|${BUILD_VERSION}|${BUILD_RELEASE}|${BUILD_VMID}|${BUILD_STORAGE}")
+        done
     done
-done
 
 if [[ ${#PLANNED_BUILDS[@]} -eq 0 ]]; then
     setStatus "No builds matched filters." "f"
@@ -1465,7 +1494,7 @@ fi
 setStatus "Planned builds: ${#PLANNED_BUILDS[@]} template(s)" "*"
 index=1
 for entry in "${PLANNED_BUILDS[@]}"; do
-    IFS='|' read -r distro version release vmid storage <<< "$entry"
+    IFS='|' read -r build_file i distro version release vmid storage <<< "$entry"
     echo "  ${index}) ${distro} ${version} (${release}) VMID ${vmid} storage ${storage}"
     index=$((index + 1))
 done
@@ -1476,35 +1505,8 @@ BUILD_RESULTS=()
 BUILD_ERRORS=()
 BUILD_WARNINGS=()
 
-for build_file in "${BUILD_FILES[@]}"; do
-    build_count=$(yq_read ".builds | length" "$build_file")
-    if [[ "$build_count" == "null" || "$build_count" == "0" ]]; then
-        continue
-    fi
-
-    for ((i=0; i<build_count; i++)); do
-        if ! collect_build_meta "$build_file" "$i"; then
-            exit 1
-        fi
-
-        distro="$BUILD_DISTRO"
-        release="$BUILD_RELEASE"
-        version="$BUILD_VERSION"
-        vmid="$BUILD_VMID"
-        storage="$BUILD_STORAGE"
-
-        if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
-            matched=false
-            for filter in "${ONLY_FILTERS[@]}"; do
-                if matches_filter "$distro" "$release" "$version" "$filter"; then
-                    matched=true
-                    break
-                fi
-            done
-            if [[ "$matched" != "true" ]]; then
-                continue
-            fi
-        fi
+for entry in "${PLANNED_BUILDS[@]}"; do
+        IFS='|' read -r build_file i distro version release vmid storage <<< "$entry"
 
         CI_USER=$(resolve_value "$build_file" "$i" "cloud_init.user" "$DEFAULT_CI_USER")
         CI_PASSWORD_FILE=$(resolve_value "$build_file" "$i" "cloud_init.password_file" "$DEFAULT_CI_PASSWORD_FILE")
@@ -1534,8 +1536,7 @@ for build_file in "${BUILD_FILES[@]}"; do
         ensure_password_file_secure "$CI_PASSWORD_FILE"
         CI_PASSWORD=$(<"$CI_PASSWORD_FILE")
 
-        if ! pvesm status | grep -q "^$storage"; then
-            echo "ERROR: Storage device '$storage' does not exist."
+        if ! verify_storage "$storage"; then
             exit 1
         fi
 
@@ -1772,31 +1773,20 @@ for build_file in "${BUILD_FILES[@]}"; do
 
         setStatus "Attaching imported disk" "*"
         STORAGE_TYPE=$(pvesm status --storage "$storage" | awk 'NR == 2 {print $2}')
-        if [[ "$STORAGE_TYPE" == "dir" ]]; then
-            setStatus " - Storage type 'Directory' detected."
-            IMPORTED_DISKFILE=${storage}:${vmid}/vm-${vmid}-disk-0.raw
-            rm -f "$IMPORTED_DISKFILE"
-        elif [[ "$STORAGE_TYPE" == "lvm" ]]; then
-            setStatus " - Storage type 'LVM' detected."
-            IMPORTED_DISKFILE=${storage}:vm-${vmid}-disk-0
-            lvremove -fy "$IMPORTED_DISKFILE" || true
-        elif [[ "$STORAGE_TYPE" == "lvmthin" ]]; then
-            setStatus " - Storage type 'LVM-Thin' detected."
-            IMPORTED_DISKFILE=${storage}:vm-${vmid}-disk-0
-            lvremove -fy "$IMPORTED_DISKFILE" || true
-        elif [[ "$STORAGE_TYPE" == "rbd" ]]; then
-            setStatus " - Storage type 'RBD' detected."
-            IMPORTED_DISKFILE=${storage}:vm-${vmid}-disk-0
-            rm -f "$IMPORTED_DISKFILE"
-        elif [[ "$STORAGE_TYPE" == "zfspool" ]]; then
-            setStatus " - Storage type 'ZFS Pool' detected."
-            IMPORTED_DISKFILE=${storage}:vm-${vmid}-disk-0
-            zfs destroy "$IMPORTED_DISKFILE" || true
-        else
-            setStatus " - Storage type not detected. Defaulting to treating as Directory storage."
-            IMPORTED_DISKFILE=${storage}:${vmid}/vm-${vmid}-disk-0.raw
-        fi
-        sleep 1
+        case "$STORAGE_TYPE" in
+            dir|nfs|cifs|btrfs)
+                setStatus " - File-based storage detected ($STORAGE_TYPE)."
+                IMPORTED_DISKFILE="${storage}:${vmid}/vm-${vmid}-disk-0.raw"
+                ;;
+            lvm|lvmthin|rbd|zfspool)
+                setStatus " - Block storage detected ($STORAGE_TYPE)."
+                IMPORTED_DISKFILE="${storage}:vm-${vmid}-disk-0"
+                ;;
+            *)
+                setStatus " - Unknown storage type '$STORAGE_TYPE'; assuming block storage notation."
+                IMPORTED_DISKFILE="${storage}:vm-${vmid}-disk-0"
+                ;;
+        esac
 
         if ! qm set "$vmid" --scsihw virtio-scsi-pci --scsi0 "$IMPORTED_DISKFILE"; then
             setStatus "Error attaching disk." "f"
@@ -2019,7 +2009,6 @@ for build_file in "${BUILD_FILES[@]}"; do
             BUILD_RESULTS+=("${BUILD_KEY}|failure")
             BUILD_ERRORS+=("${BUILD_KEY}|${FAILURE_REASON}")
         fi
-    done
 done
 
 # Display final build summary
