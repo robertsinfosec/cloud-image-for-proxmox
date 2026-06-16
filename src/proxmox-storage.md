@@ -573,7 +573,10 @@ proxmox-storage.sh --provision --os-size 120G --force
 ```
 
 > [!CAUTION]
-> If current root is larger than `--os-size`, online shrink is not possible on mounted `/`. The script skips live shrink, continues safely, and can rename `local` to an `SSD-<N><Letter>` label when no reclaimable free extents exist. Use offline rescue mode for strict root downsizing.
+> If current root is larger than `--os-size`, online shrink is not possible on mounted `/`. The script skips live shrink and keeps `local` as valid root-backed storage when no reclaimable free extents exist. Use offline rescue mode for strict root downsizing.
+
+> [!IMPORTANT]
+> Renaming `local` is intentionally blocked by this script. In clustered Proxmox, `local` is a cluster-wide storage ID with node-local paths; renaming it can create confusing and hard-to-debug behavior across nodes.
 
 Typical usage:
 

@@ -733,33 +733,6 @@ reclaim_system_disk() {
   local target_gb current_root_gb vg_free_mb thin_size_mb
   local sid letter thinpool
 
-  rename_local_storage_fallback() {
-    local local_sid="local"
-    local new_sid=""
-    local L
-
-    if ! storage_exists "$local_sid"; then
-      return 0
-    fi
-
-    for L in {A..Z}; do
-      local candidate
-      candidate="SSD-${hd}${L}"
-      if ! storage_exists "$candidate"; then
-        new_sid="$candidate"
-        break
-      fi
-    done
-
-    if [[ -z "$new_sid" ]]; then
-      p_warn "Could not find free SSD-${hd}X name to rename 'local' storage"
-      return 0
-    fi
-
-    p_warn "No reclaimable system VG free space. Renaming 'local' to '$new_sid' for consistent naming."
-    rename_storage "$local_sid" "$new_sid"
-  }
-
   p_info "System disk reclaim: target root=$OS_SIZE_TARGET and convert remaining VG space into Proxmox storage"
 
   # Remove local-lvm storage entry if present
@@ -813,7 +786,8 @@ reclaim_system_disk() {
   vg_free_mb="${vg_free_mb:-0}"
   if (( vg_free_mb < 2048 )); then
     p_warn "Not enough free VG space on system disk after root sizing (${vg_free_mb}M free); skipping system-disk storage creation."
-    rename_local_storage_fallback
+    p_info "'local' remains valid and usable root-backed storage."
+    p_info "If you want strict SSD-<N><Letter> naming for system disk, do offline root shrink first, then re-run provision."
     return 0
   fi
 
@@ -1705,12 +1679,18 @@ rename_storage() {
   local old_sid="$1"
   local new_sid="$2"
   local cfg="/etc/pve/storage.cfg"
+  local node
+  node="$(hostname -s)"
   
   p_info "Renaming storage: $old_sid -> $new_sid"
   
   # Verify old storage exists
   if ! storage_exists "$old_sid"; then
     die "Storage '$old_sid' does not exist"
+  fi
+
+  if [[ "$old_sid" == "local" ]]; then
+    die "Renaming 'local' is disabled. In clusters, 'local' is a cluster-wide storage ID with node-local paths and renaming it causes confusing behavior.\n       Keep 'local' as-is, or perform offline root shrink to free VG space and let this script create SSD-${node: -1}A style system storage."
   fi
   
   # Verify new name doesn't exist
