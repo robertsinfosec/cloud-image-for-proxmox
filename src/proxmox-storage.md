@@ -563,6 +563,7 @@ This mode provisions **new/unused non‑system disks** as node‑local Proxmox s
 - Formats as ext4 and mounts under `/mnt/disks/<LABEL>`
 - Adds each mount as a Proxmox `dir` storage (node‑local, non‑shared)
 - Reclaims the system disk by removing `local-lvm`, targeting `/dev/pve/root` to `--os-size` (default `120G`), and creating system `lvm-thin` storage from remaining VG space when free extents exist
+- Automatically expands the system LVM partition/PV to consume trailing unpartitioned disk space (common after custom installer sizing), then uses the newly visible VG free extents
 - **Skips** already-provisioned disks (safe default)
 
 `--os-size` controls target root size in provision mode:

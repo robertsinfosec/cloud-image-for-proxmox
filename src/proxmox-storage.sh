@@ -388,6 +388,10 @@ require_cmd() {
     lsblk|findmnt|partx|wipefs|blkid|blockdev)
       pkg="util-linux"
       ;;
+    # partition editor
+    parted)
+      pkg="parted"
+      ;;
     # LVM
     pvs|vgs|lvs|lvremove|lvextend|lvreduce|vgchange|vgremove|pvremove)
       pkg="lvm2"
@@ -727,6 +731,75 @@ ensure_pvesm_nfs_storage() {
     pvesm add nfs "$sid" --server "$server" --export "$export_path" --content "$content" --options "$options" --nodes "$node"
 }
 
+partition_number_from_device() {
+  local dev="$1"
+  local base
+  base="$(basename "$dev")"
+
+  # NVMe/MMC style (nvme0n1p3, mmcblk0p2)
+  if [[ "$base" =~ p([0-9]+)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  # SATA/SCSI style (sda3, vda2)
+  if [[ "$base" =~ ([0-9]+)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  return 1
+}
+
+expand_system_pv_to_full_disk() {
+  local pv disk partnum max_part tail_free_mib
+
+  # This script targets standard Proxmox ISO LVM layout where pve VG backs root.
+  pv="$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk '$2=="pve"{print $1; exit}')"
+  if [[ -z "$pv" ]]; then
+    p_warn "Could not find PV for VG 'pve'; skipping automatic system PV expansion"
+    return 0
+  fi
+
+  if [[ "$(lsblk -dn -o TYPE "$pv" 2>/dev/null || true)" != "part" ]]; then
+    p_warn "System PV $pv is not a partition; skipping automatic system PV expansion"
+    return 0
+  fi
+
+  disk="/dev/$(lsblk -no PKNAME "$pv" 2>/dev/null | tail -1)"
+  [[ -b "$disk" ]] || {
+    p_warn "Could not determine parent disk for PV $pv; skipping automatic system PV expansion"
+    return 0
+  }
+
+  partnum="$(partition_number_from_device "$pv" || true)"
+  if [[ -z "$partnum" ]]; then
+    p_warn "Could not determine partition number for PV $pv; skipping automatic system PV expansion"
+    return 0
+  fi
+
+  max_part="$(lsblk -ln -o NAME,TYPE "$disk" | awk '$2=="part"{print $1}' | sed -E 's/.*p?([0-9]+)$/\1/' | sort -n | tail -1)"
+  if [[ "$partnum" != "$max_part" ]]; then
+    p_warn "System PV partition ($pv) is not the last partition on $disk; skipping auto-resize for safety"
+    return 0
+  fi
+
+  # Last 'free' segment in parted output is typically the trailing free space.
+  tail_free_mib="$(parted -ms "$disk" unit MiB print free 2>/dev/null | awk -F: '$5=="free;" {gsub("MiB", "", $4); last=$4+0} END {printf "%.0f", last+0}')"
+  tail_free_mib="${tail_free_mib:-0}"
+
+  if (( tail_free_mib < 2048 )); then
+    p_ok "System PV partition already uses disk tail (or <2GiB free tail). No PV expansion needed."
+    return 0
+  fi
+
+  p_warn "Detected ${tail_free_mib}MiB unpartitioned tail space on system disk $disk; expanding $pv to 100%"
+  run_cmd "Expanding partition $pv to fill disk" parted --script "$disk" resizepart "$partnum" 100%
+  run_cmd "Refreshing kernel partition table for $disk" partx -u "$disk" || true
+  run_cmd "Waiting for udev to settle" udevadm settle || true
+  run_cmd "Expanding PV to use full partition: $pv" pvresize "$pv"
+}
+
 reclaim_system_disk() {
   local hd="$1"
   local root_lv="/dev/pve/root"
@@ -734,6 +807,9 @@ reclaim_system_disk() {
   local sid letter thinpool
 
   p_info "System disk reclaim: target root=$OS_SIZE_TARGET and convert remaining VG space into Proxmox storage"
+
+  # Auto-heal Proxmox installs where installer left large unpartitioned tail space.
+  expand_system_pv_to_full_disk
 
   # Remove local-lvm storage entry if present
   p_info "Checking for Proxmox storage 'local-lvm'"
@@ -2801,6 +2877,7 @@ main() {
   require_cmd blkid
   require_cmd wipefs
   require_cmd partx
+  require_cmd parted
   require_cmd udevadm
   require_cmd sgdisk
   require_cmd pvesm
