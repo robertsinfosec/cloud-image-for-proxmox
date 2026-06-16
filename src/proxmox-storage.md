@@ -3,7 +3,7 @@
 This script provisions and deprovisions storage on a Proxmox node in a repeatable, node‑local way. It is designed for fresh installs (ISO defaults) and for cleanup/reprovisioning of older systems.
 
 At a high level:
-- The system disk is kept **OS‑only** (no Proxmox storage on it).
+- The system disk root is targeted to a bounded size (default `120G`) and remaining system VG space is converted to Proxmox `lvm-thin` storage.
 - Every **non‑system disk** is either adopted into Proxmox storage (provision) or wiped back to raw (deprovision).
 - Storage naming is standardized: `HDD-<N><Letter>` and `SSD-<N><Letter>`, where `<N>` is the node’s hostname digit.
 
@@ -19,8 +19,8 @@ These are intentional defaults to keep storage consistent across many nodes:
   - Hostnames must end in a single digit (e.g., `pve1`). Multi-digit suffixes (e.g., `pve10`) are not supported.
 - **Labeling scheme**: storage IDs and disk labels use `HDD-<N><Letter>` or `SSD-<N><Letter>`.
   - Example on `pve2`: `HDD-2A`, `HDD-2B`, `SSD-2A`.
-- **System disk policy**: the system disk is **OS‑only**.
-  - No Proxmox storage is created on it.
+- **System disk policy**: the root LV is targeted to a fixed size (default `120G`).
+  - Remaining free space in VG `pve` is used to create node-local `lvm-thin` Proxmox storage (for example `SSD-1A`).
 - **Everything else**: all non‑system disks are owned by Proxmox after provisioning.
 
 > [!TIP]
@@ -43,8 +43,9 @@ proxmox-storage.sh --provision --force
 ```
 
 That run will:
-- Expand the system disk to use all available space for `/`.
+- Resize system root toward target size (default `120G`, configurable with `--os-size`).
 - Remove the default `local-lvm` thinpool if present.
+- Create system-disk `lvm-thin` storage from remaining free VG space (for example `SSD-1A`).
 - Partition, format, and mount every **new/unused** non‑system disk.
 - Add each disk as a Proxmox `dir` storage.
 - **Skip** any already-provisioned disks (non-destructive, safe default).
@@ -62,7 +63,7 @@ Imagine a node named `pve1` with:
 
 After provisioning, you typically end up with:
 
-- System disk expanded for `/` only
+- System root at target size (default `120G`) plus system-disk Proxmox storage (`SSD-1A`)
 - `SSD-1A` → VM OS disks (fast, low latency)
 - `HDD-1A` → VM data (large, cheaper storage)
 
@@ -561,8 +562,18 @@ This mode provisions **new/unused non‑system disks** as node‑local Proxmox s
 - Wipes and partitions each new/unused non‑system disk
 - Formats as ext4 and mounts under `/mnt/disks/<LABEL>`
 - Adds each mount as a Proxmox `dir` storage (node‑local, non‑shared)
-- Reclaims the system disk by removing `local-lvm` and expanding `/`
+- Reclaims the system disk by removing `local-lvm`, sizing `/dev/pve/root` to `--os-size` (default `120G`), and creating system `lvm-thin` storage from remaining VG space
 - **Skips** already-provisioned disks (safe default)
+
+`--os-size` controls target root size in provision mode:
+
+```bash
+# Keep ~120G for root and use remaining system VG space for Proxmox storage
+proxmox-storage.sh --provision --os-size 120G --force
+```
+
+> [!CAUTION]
+> If current root is larger than `--os-size`, the script attempts an automated root LV shrink (`lvreduce --resizefs`) on the running host. This is high risk and may fail depending on filesystem/kernel state.
 
 Typical usage:
 
