@@ -32,7 +32,6 @@ show_mode_banner() {
       echo -e "║ ${C_OK}MODE: PROVISION STORAGE${NC}"
       echo "╠════════════════════════════════════════════════════════════════════════════════╣"
       echo "║ This will create new Proxmox storage on available disks."
-      echo "║ System root target: $OS_SIZE_TARGET"
       if [[ $ALL -eq 1 ]]; then
         echo -e "║ ${C_WARN}WARNING: --all specified - will DESTROY and re-provision ALL storage!${NC}"
       fi
@@ -85,7 +84,6 @@ STORAGE_TYPE="dir"  # dir, lvm, lvm-thin, nfs
 NFS_SERVER=""
 NFS_PATH=""
 NFS_OPTIONS="vers=4,soft"
-OS_SIZE_TARGET="120G"
 
 log_context() {
   local node
@@ -94,7 +92,7 @@ log_context() {
   if [[ ${#ONLY_FILTERS[@]} -gt 0 ]]; then
     filters="${ONLY_FILTERS[*]}"
   fi
-  p_info "Context: node=$node mode=${MODE:-unset} type=$STORAGE_TYPE whatif=$WHATIF force=$FORCE full_format=$((1-QUICK_FORMAT)) all=$ALL os_target=$OS_SIZE_TARGET filters=$filters"
+  p_info "Context: node=$node mode=${MODE:-unset} type=$STORAGE_TYPE whatif=$WHATIF force=$FORCE full_format=$((1-QUICK_FORMAT)) all=$ALL filters=$filters"
 }
 
 usage() {
@@ -118,9 +116,6 @@ Options:
   --nfs-server <host> NFS server hostname or IP (required with --type nfs)
   --nfs-path <path>   NFS export path (required with --type nfs)
   --nfs-options <opts> NFS mount options (default: vers=4,soft)
-  --os-size <size>    Target root LV size on system disk for --provision
-                      Format: <integer>G (default: 120G)
-                      Example: --os-size 120G
   --rename            Rename existing storage (non-destructive)
                       Format: --rename old-name:new-name
                       Example: --rename pve-disk-storage1:SSD-1C
@@ -238,11 +233,6 @@ parse_args() {
         [[ -n "${1:-}" ]] || die "--nfs-options requires mount options"
         NFS_OPTIONS="$1"
         ;;
-      --os-size)
-        shift
-        [[ -n "${1:-}" ]] || die "--os-size requires a value like 120G"
-        OS_SIZE_TARGET="$1"
-        ;;
       --only)
         shift
         [[ -n "${1:-}" ]] || die "--only requires a value (device path or storage name)"
@@ -277,19 +267,6 @@ parse_args() {
     if [[ $ALL -eq 1 ]]; then
       die "--all is only valid with --provision"
     fi
-    if [[ "$OS_SIZE_TARGET" != "120G" ]]; then
-      die "--os-size is only valid with --provision"
-    fi
-  fi
-
-  if [[ ! "$OS_SIZE_TARGET" =~ ^[0-9]+G$ ]]; then
-    die "Invalid --os-size value: $OS_SIZE_TARGET (expected format: <integer>G, example: 120G)"
-  fi
-
-  local os_size_gb
-  os_size_gb="${OS_SIZE_TARGET%G}"
-  if (( os_size_gb < 32 )); then
-    die "--os-size is too small ($OS_SIZE_TARGET). Minimum supported value is 32G."
   fi
 
   # Validate NFS requirements
@@ -800,13 +777,69 @@ expand_system_pv_to_full_disk() {
   run_cmd "Expanding PV to use full partition: $pv" pvresize "$pv"
 }
 
+show_system_disk_reclaim_readiness() {
+  local sysdisk="$1"
+  local pv disk partnum max_part tail_free_mib vg_free_g root_g
+
+  echo ""
+  echo "╔════════════════════════════════════════════════════════════════════════════════╗"
+  echo "║ SYSTEM DISK RECLAIM READINESS"
+  echo "╚════════════════════════════════════════════════════════════════════════════════╝"
+  echo ""
+
+  pv="$(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk '$2=="pve"{print $1; exit}')"
+  if [[ -z "$pv" ]]; then
+    echo "  - VG pve PV: not detected"
+    echo "  - Auto-expand: unavailable (non-standard layout)"
+    echo ""
+    return
+  fi
+
+  disk="/dev/$(lsblk -no PKNAME "$pv" 2>/dev/null | tail -1)"
+  partnum="$(partition_number_from_device "$pv" 2>/dev/null || true)"
+  max_part="$(lsblk -ln -o NAME,TYPE "$disk" 2>/dev/null | awk '$2=="part"{print $1}' | sed -E 's/.*p?([0-9]+)$/\1/' | sort -n | tail -1)"
+  tail_free_mib="$(parted -ms "$disk" unit MiB print free 2>/dev/null | awk -F: '$5=="free;" {gsub("MiB", "", $4); last=$4+0} END {printf "%.0f", last+0}')"
+  tail_free_mib="${tail_free_mib:-0}"
+
+  root_g="$(lvs --noheadings -o lv_size --units g --nosuffix pve/root 2>/dev/null | awk '{$1=$1; print int($1+0.5); exit}')"
+  root_g="${root_g:-0}"
+  vg_free_g="$(vgs --noheadings -o vg_free --units g --nosuffix pve 2>/dev/null | awk '{$1=$1; print int($1+0.5); exit}')"
+  vg_free_g="${vg_free_g:-0}"
+
+  echo "  - System disk: $sysdisk"
+  echo "  - Root LV (pve/root): ${root_g}G (as installed)"
+  echo "  - pve VG free now: ${vg_free_g}G"
+  echo "  - pve PV: $pv on $disk"
+  echo ""
+
+  if [[ -z "$partnum" || -z "$max_part" ]]; then
+    echo "  - Auto-expand check: unable to parse partition layout"
+    echo ""
+    return
+  fi
+
+  if [[ "$partnum" != "$max_part" ]]; then
+    echo "  - Auto-expand check: blocked (system PV is not the last partition on disk)"
+    echo ""
+    return
+  fi
+
+  if (( tail_free_mib >= 2048 )); then
+    echo "  - Trailing unpartitioned space detected: ${tail_free_mib}MiB"
+    echo "  - On --provision, script will auto-expand $pv and run pvresize"
+  else
+    echo "  - No meaningful trailing unpartitioned space detected on system disk"
+  fi
+
+  echo ""
+}
+
 reclaim_system_disk() {
   local hd="$1"
-  local root_lv="/dev/pve/root"
-  local target_gb current_root_gb vg_free_mb thin_size_mb
+  local vg_free_mb thin_size_mb
   local sid letter thinpool
 
-  p_info "System disk reclaim: target root=$OS_SIZE_TARGET and convert remaining VG space into Proxmox storage"
+  p_info "System disk reclaim: use installed root layout and convert remaining system VG space into Proxmox storage"
 
   # Auto-heal Proxmox installs where installer left large unpartitioned tail space.
   expand_system_pv_to_full_disk
@@ -841,29 +874,12 @@ reclaim_system_disk() {
     p_ok "LV pve/data_tdata not present (already removed)"
   fi
 
-  [[ -e "$root_lv" ]] || die "Root LV not found at $root_lv"
-
-  target_gb="${OS_SIZE_TARGET%G}"
-  current_root_gb="$(lvs --noheadings -o lv_size --units g --nosuffix pve/root 2>/dev/null | awk '{$1=$1; print int($1+0.5); exit}')"
-  [[ -n "$current_root_gb" ]] || die "Unable to determine current size of $root_lv"
-
-  if (( current_root_gb > target_gb )); then
-    p_warn "Root LV is ${current_root_gb}G and target is ${target_gb}G"
-    p_warn "Cannot shrink mounted root filesystem online. Skipping shrink; use offline rescue mode if you need strict root target sizing."
-  elif (( current_root_gb < target_gb )); then
-    p_info "Root LV is ${current_root_gb}G, extending to target ${target_gb}G"
-    run_cmd "Extending $root_lv to $OS_SIZE_TARGET" lvextend -L "$OS_SIZE_TARGET" "$root_lv"
-    run_cmd "Resizing filesystem on $root_lv" resize2fs "$root_lv"
-  else
-    p_ok "Root LV already at target size ($OS_SIZE_TARGET)"
-  fi
-
   vg_free_mb="$(vgs --noheadings -o vg_free --units m --nosuffix pve 2>/dev/null | awk '{$1=$1; print int($1); exit}')"
   vg_free_mb="${vg_free_mb:-0}"
   if (( vg_free_mb < 2048 )); then
-    p_warn "Not enough free VG space on system disk after root sizing (${vg_free_mb}M free); skipping system-disk storage creation."
+    p_warn "Not enough free VG space on system disk (${vg_free_mb}M free); skipping system-disk storage creation."
     p_info "'local' remains valid and usable root-backed storage."
-    p_info "If you want strict SSD-<N><Letter> naming for system disk, do offline root shrink first, then re-run provision."
+    p_info "If you want additional system-disk storage, allocate a smaller OS partition during install, then re-run provision."
     return 0
   fi
 
@@ -2314,7 +2330,7 @@ show_available_for_provisioning() {
 whatif_summary_provision() {
   local sysdisk="$1" hd="$2"
   p_info "What-if summary (provision)"
-  printf '%s\n' "    - System disk: $sysdisk (root target: $OS_SIZE_TARGET, reclaim local-lvm and create system lvm-thin if space exists)"
+  printf '%s\n' "    - System disk: $sysdisk (use installed root layout, reclaim local-lvm, auto-expand system PV tail if present, create system lvm-thin if free space exists)"
 
   mapfile -t disks < <(list_target_disks "$sysdisk")
   if [[ "${#disks[@]}" -eq 0 ]]; then
@@ -2796,7 +2812,7 @@ print_summary_and_plan() {
     printf '%s\n' "    - Filters: ${ONLY_FILTERS[*]}"
     printf '%s\n' "    - Goal: provision filtered disks only (system disk unchanged)"
   else
-    printf '%s\n' "    - Goal: keep system root at $OS_SIZE_TARGET and allocate remaining system VG space to Proxmox lvm-thin"
+    printf '%s\n' "    - Goal: keep system root as installed and allocate remaining system VG space to Proxmox lvm-thin"
     printf '%s\n' "    - ALL other disks are fair game and will be (re)provisioned as Proxmox storage"
   fi
   printf '%s\n' "    - Storage naming: HDD-${hd}A, HDD-${hd}B... and SSD-${hd}A, SSD-${hd}B... (per host digit, per type)"
@@ -2823,7 +2839,7 @@ print_summary_and_plan() {
   else
     printf '%s\n' "    1) Remove Proxmox storage 'local-lvm' (if present)"
     printf '%s\n' "    2) Destroy LVM thinpool LV(s): pve/data, pve/data_tmeta, pve/data_tdata (if present)"
-    printf '%s\n' "    3) Resize /dev/pve/root to target $OS_SIZE_TARGET (auto-shrink/extend)"
+    printf '%s\n' "    3) Auto-expand system PV partition to disk tail and run pvresize (when trailing free space exists)"
     printf '%s\n' "    4) Create lvm-thin storage on remaining system VG space (SSD-${hd}A, SSD-${hd}B...)"
     printf '%s\n' "    5) For every non-system disk:"
     printf '%s\n' "       - If labeled HDD-${hd}X / SSD-${hd}X already: heal mount/fstab/storage"
@@ -2846,9 +2862,11 @@ main() {
       die "--only is not valid with --status"
     fi
     require_cmd smartctl
+    require_cmd parted
     show_available_storage
     show_storage_mapping
     show_available_for_provisioning
+    show_system_disk_reclaim_readiness "$(get_system_disk)"
     exit 0
   fi
 
@@ -2901,14 +2919,12 @@ main() {
   fi
   
   # Always needed for deprovisioning
-  require_cmd resize2fs
   require_cmd blockdev
   require_cmd pvs
   require_cmd vgs
   require_cmd lvs
   require_cmd lvremove
   require_cmd lvextend
-  require_cmd lvreduce
   require_cmd vgchange
   require_cmd vgremove
   require_cmd pvremove

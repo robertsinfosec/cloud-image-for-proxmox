@@ -3,7 +3,7 @@
 This script provisions and deprovisions storage on a Proxmox node in a repeatable, node‑local way. It is designed for fresh installs (ISO defaults) and for cleanup/reprovisioning of older systems.
 
 At a high level:
-- The system disk root is targeted to a bounded size (default `120G`) and remaining system VG space is converted to Proxmox `lvm-thin` storage.
+- The system disk root layout is taken as installed, and remaining system VG space is converted to Proxmox `lvm-thin` storage when available.
 - Every **non‑system disk** is either adopted into Proxmox storage (provision) or wiped back to raw (deprovision).
 - Storage naming is standardized: `HDD-<N><Letter>` and `SSD-<N><Letter>`, where `<N>` is the node’s hostname digit.
 
@@ -19,7 +19,7 @@ These are intentional defaults to keep storage consistent across many nodes:
   - Hostnames must end in a single digit (e.g., `pve1`). Multi-digit suffixes (e.g., `pve10`) are not supported.
 - **Labeling scheme**: storage IDs and disk labels use `HDD-<N><Letter>` or `SSD-<N><Letter>`.
   - Example on `pve2`: `HDD-2A`, `HDD-2B`, `SSD-2A`.
-- **System disk policy**: the root LV is targeted to a fixed size (default `120G`).
+- **System disk policy**: root LV sizing is installer-owned (source of truth is partition table/LVM layout).
   - Remaining free space in VG `pve` is used to create node-local `lvm-thin` Proxmox storage (for example `SSD-1A`).
 - **Everything else**: all non‑system disks are owned by Proxmox after provisioning.
 
@@ -43,9 +43,10 @@ proxmox-storage.sh --provision --force
 ```
 
 That run will:
-- Resize system root toward target size (default `120G`, configurable with `--os-size`).
+- Keep system root sizing as installed.
 - Remove the default `local-lvm` thinpool if present.
 - Create system-disk `lvm-thin` storage from remaining free VG space (for example `SSD-1A`).
+- Automatically expand the system LVM partition/PV to consume trailing unpartitioned disk space when safe to do so.
 - Partition, format, and mount every **new/unused** non‑system disk.
 - Add each disk as a Proxmox `dir` storage.
 - **Skip** any already-provisioned disks (non-destructive, safe default).
@@ -63,7 +64,7 @@ Imagine a node named `pve1` with:
 
 After provisioning, you typically end up with:
 
-- System root at target size (default `120G`) plus system-disk Proxmox storage (`SSD-1A`)
+- System root at installer-defined size plus system-disk Proxmox storage (`SSD-1A`) when free extents exist
 - `SSD-1A` → VM OS disks (fast, low latency)
 - `HDD-1A` → VM data (large, cheaper storage)
 
@@ -562,19 +563,12 @@ This mode provisions **new/unused non‑system disks** as node‑local Proxmox s
 - Wipes and partitions each new/unused non‑system disk
 - Formats as ext4 and mounts under `/mnt/disks/<LABEL>`
 - Adds each mount as a Proxmox `dir` storage (node‑local, non‑shared)
-- Reclaims the system disk by removing `local-lvm`, targeting `/dev/pve/root` to `--os-size` (default `120G`), and creating system `lvm-thin` storage from remaining VG space when free extents exist
+- Reclaims the system disk by removing `local-lvm`, auto-expanding system PV partition tail space when available, and creating system `lvm-thin` storage from remaining VG space when free extents exist
 - Automatically expands the system LVM partition/PV to consume trailing unpartitioned disk space (common after custom installer sizing), then uses the newly visible VG free extents
 - **Skips** already-provisioned disks (safe default)
 
-`--os-size` controls target root size in provision mode:
-
-```bash
-# Keep ~120G for root and use remaining system VG space for Proxmox storage
-proxmox-storage.sh --provision --os-size 120G --force
-```
-
 > [!CAUTION]
-> If current root is larger than `--os-size`, online shrink is not possible on mounted `/`. The script skips live shrink and keeps `local` as valid root-backed storage when no reclaimable free extents exist. Use offline rescue mode for strict root downsizing.
+> Online root shrinking is not attempted by this script. Root sizing is installer-owned.
 
 > [!IMPORTANT]
 > Renaming `local` is intentionally blocked by this script. In clustered Proxmox, `local` is a cluster-wide storage ID with node-local paths; renaming it can create confusing and hard-to-debug behavior across nodes.
