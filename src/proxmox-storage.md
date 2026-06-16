@@ -562,7 +562,7 @@ This mode provisions **new/unused non‑system disks** as node‑local Proxmox s
 - Wipes and partitions each new/unused non‑system disk
 - Formats as ext4 and mounts under `/mnt/disks/<LABEL>`
 - Adds each mount as a Proxmox `dir` storage (node‑local, non‑shared)
-- Reclaims the system disk by removing `local-lvm`, sizing `/dev/pve/root` to `--os-size` (default `120G`), and creating system `lvm-thin` storage from remaining VG space
+- Reclaims the system disk by removing `local-lvm`, targeting `/dev/pve/root` to `--os-size` (default `120G`), and creating system `lvm-thin` storage from remaining VG space when free extents exist
 - **Skips** already-provisioned disks (safe default)
 
 `--os-size` controls target root size in provision mode:
@@ -573,7 +573,7 @@ proxmox-storage.sh --provision --os-size 120G --force
 ```
 
 > [!CAUTION]
-> If current root is larger than `--os-size`, the script attempts an automated root LV shrink (`lvreduce --resizefs`) on the running host. This is high risk and may fail depending on filesystem/kernel state.
+> If current root is larger than `--os-size`, online shrink is not possible on mounted `/`. The script skips live shrink, continues safely, and can rename `local` to an `SSD-<N><Letter>` label when no reclaimable free extents exist. Use offline rescue mode for strict root downsizing.
 
 Typical usage:
 

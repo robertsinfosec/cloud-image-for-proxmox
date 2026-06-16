@@ -598,7 +598,7 @@ disk_is_rotational() {
 
 next_letter() {
   local typ="$1" hd="$2"
-  local used letters vg_names vg_list
+  local used letters vg_names vg_list sid_names
   
   # Check partition labels (for dir storage)
   used="$(blkid -o value -s LABEL 2>/dev/null | grep -E "^${typ}-${hd}[A-Z]$" || true)"
@@ -616,7 +616,8 @@ next_letter() {
   done <<< "$vg_list"
   
   # Combine both sources
-  used="${used}${vg_names}"
+  sid_names="$(pvesm status 2>/dev/null | awk -v t="$typ" -v h="$hd" 'NR>1 && $1 ~ ("^" t "-" h "[A-Z]$") {print $1}' || true)"
+  used="${used}${vg_names}${sid_names}"
   
   letters=""
   for L in $used; do
@@ -732,6 +733,33 @@ reclaim_system_disk() {
   local target_gb current_root_gb vg_free_mb thin_size_mb
   local sid letter thinpool
 
+  rename_local_storage_fallback() {
+    local local_sid="local"
+    local new_sid=""
+    local L
+
+    if ! storage_exists "$local_sid"; then
+      return 0
+    fi
+
+    for L in {A..Z}; do
+      local candidate
+      candidate="SSD-${hd}${L}"
+      if ! storage_exists "$candidate"; then
+        new_sid="$candidate"
+        break
+      fi
+    done
+
+    if [[ -z "$new_sid" ]]; then
+      p_warn "Could not find free SSD-${hd}X name to rename 'local' storage"
+      return 0
+    fi
+
+    p_warn "No reclaimable system VG free space. Renaming 'local' to '$new_sid' for consistent naming."
+    rename_storage "$local_sid" "$new_sid"
+  }
+
   p_info "System disk reclaim: target root=$OS_SIZE_TARGET and convert remaining VG space into Proxmox storage"
 
   # Remove local-lvm storage entry if present
@@ -772,10 +800,7 @@ reclaim_system_disk() {
 
   if (( current_root_gb > target_gb )); then
     p_warn "Root LV is ${current_root_gb}G and target is ${target_gb}G"
-    p_warn "Attempting automated shrink of mounted root (high risk and may fail depending on kernel/filesystem state)."
-    if ! run_cmd "Shrinking root LV/filesystem to $OS_SIZE_TARGET" lvreduce --yes --force --resizefs -L "$OS_SIZE_TARGET" "$root_lv"; then
-      die "Automated shrink failed. Reinstall or perform offline shrink manually, then re-run provision."
-    fi
+    p_warn "Cannot shrink mounted root filesystem online. Skipping shrink; use offline rescue mode if you need strict root target sizing."
   elif (( current_root_gb < target_gb )); then
     p_info "Root LV is ${current_root_gb}G, extending to target ${target_gb}G"
     run_cmd "Extending $root_lv to $OS_SIZE_TARGET" lvextend -L "$OS_SIZE_TARGET" "$root_lv"
@@ -788,6 +813,7 @@ reclaim_system_disk() {
   vg_free_mb="${vg_free_mb:-0}"
   if (( vg_free_mb < 2048 )); then
     p_warn "Not enough free VG space on system disk after root sizing (${vg_free_mb}M free); skipping system-disk storage creation."
+    rename_local_storage_fallback
     return 0
   fi
 
