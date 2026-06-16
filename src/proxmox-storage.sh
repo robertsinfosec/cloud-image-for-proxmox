@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -Eeo pipefail
 
 # Strict error handling: ERR trap must be set BEFORE set -u to avoid trap crashes
 # This trap will fire if any command exits non-zero (unless caught by ||)
 # We use only safe variable references here to prevent trap-induced crashes
 on_err() {
   # Use only safe variable references; LINENO and BASH_COMMAND are special and always available
-  local rc="${1:-unknown}"
-  local cmd="${2:-unknown}"
-  p_err "Command failed (rc=$rc) at line $rc: $cmd"
+  local rc="${1:-1}"
+  local line="${2:-unknown}"
+  local cmd="${3:-unknown}"
+  p_err "Command failed (rc=$rc) at line $line: $cmd"
   exit "${rc}"
 }
-trap 'on_err "${LINENO}" "${BASH_COMMAND}"' ERR
+trap 'on_err "$?" "${LINENO}" "${BASH_COMMAND}"' ERR
 
 # Enable strict variable checking AFTER ERR trap is set up
 # This prevents uninitialized variables from crashing the script before the trap is ready
@@ -934,7 +935,11 @@ show_system_disk_reclaim_readiness() {
 reclaim_system_disk() {
   local hd="$1"
   local vg_free_mb thin_size_mb
-  local sid letter thinpool
+  local sid letter thinpool existing_system_storage
+  local canonical_sid canonical_pool
+
+  canonical_sid="SSD-${hd}A"
+  canonical_pool="pool-${hd}A"
 
   p_info "System disk reclaim: use installed root layout and convert remaining system VG space into Proxmox storage"
 
@@ -972,22 +977,50 @@ reclaim_system_disk() {
     p_ok "LV pve/data_tdata not present (already removed)"
   fi
 
+  # Force-all policy: collapse system-disk tail storage to one canonical pool.
+  if [[ "$ALL" -eq 1 ]]; then
+    p_warn "--all mode: rebuilding system-disk thin pools to canonical ${canonical_sid} (${canonical_pool})"
+
+    # Remove all pve-backed SSD entries for this node digit so config can be rebuilt cleanly.
+    local type sid_cfg path_cfg nodes_cfg shared_cfg vgname_cfg thinpool_cfg
+    while IFS='|' read -r type sid_cfg path_cfg nodes_cfg shared_cfg vgname_cfg thinpool_cfg; do
+      [[ "$type" == "lvmthin" ]] || continue
+      [[ "$vgname_cfg" == "pve" ]] || continue
+      [[ "$sid_cfg" =~ ^SSD-${hd}[A-Z]$ ]] || continue
+      run_cmd "Removing system-disk storage entry '$sid_cfg'" pvesm remove "$sid_cfg"
+      _pvesm_invalidate_cache
+    done < <(parse_storage_cfg)
+
+    # Remove all previously-created system thin pools for this node digit.
+    local pool_name lv_attr
+    while read -r pool_name lv_attr; do
+      [[ -n "$pool_name" ]] || continue
+      [[ "$lv_attr" =~ ^t ]] || continue
+      [[ "$pool_name" =~ ^pool-${hd}[A-Z]$ ]] || continue
+      run_cmd "Removing stale system thin pool pve/$pool_name" lvremove -y "pve/$pool_name"
+    done < <(lvs --noheadings -o lv_name,lv_attr pve 2>/dev/null | awk 'NF{print $1, $2}')
+  fi
+
   # If storage.cfg was cleared manually, rehydrate it from the existing pve
   # thin pools before trying to reuse or create any system-disk SSD entries.
-  if ensure_system_disk_storage_entries_from_pve_lvs "$hd"; then
-    p_info "System-disk storage entries reconciled from existing pve thin pools"
-    return 0
+  if [[ "$ALL" -ne 1 ]]; then
+    if ensure_system_disk_storage_entries_from_pve_lvs "$hd"; then
+      p_info "System-disk storage entry reconciled from existing pve thin pools"
+      return 0
+    fi
   fi
 
   # If this host already has a pve-backed SSD-<digit><letter> storage entry,
   # reuse it instead of minting a new letter every time reclaim runs.
-  if existing_system_storage="$(find_existing_system_disk_storage "$hd" 2>/dev/null || true)"; [[ -n "$existing_system_storage" ]]; then
-    sid="${existing_system_storage%%|*}"
-    thinpool="${existing_system_storage##*|}"
-    p_info "Reusing existing system-disk storage: $sid (VG pve, thin pool $thinpool)"
-    ensure_pvesm_lvm_thin_storage "$sid" "pve" "$thinpool"
-    cleanup_duplicate_system_disk_storage_entries "$hd" "$sid"
-    return 0
+  if [[ "$ALL" -ne 1 ]]; then
+    if existing_system_storage="$(find_existing_system_disk_storage "$hd" 2>/dev/null || true)"; [[ -n "$existing_system_storage" ]]; then
+      sid="${existing_system_storage%%|*}"
+      thinpool="${existing_system_storage##*|}"
+      p_info "Reusing existing system-disk storage: $sid (VG pve, thin pool $thinpool)"
+      ensure_pvesm_lvm_thin_storage "$sid" "pve" "$thinpool"
+      cleanup_duplicate_system_disk_storage_entries "$hd" "$sid"
+      return 0
+    fi
   fi
 
   vg_free_mb="$(vgs --noheadings -o vg_free --units m --nosuffix pve 2>/dev/null | awk '{$1=$1; print int($1); exit}')"
@@ -999,22 +1032,27 @@ reclaim_system_disk() {
     return 0
   fi
 
-  sid=""
-  for letter in {A..Z}; do
-    local candidate_sid candidate_pool
-    candidate_sid="SSD-${hd}${letter}"
-    candidate_pool="pool-${hd}${letter}"
-    if storage_exists "$candidate_sid"; then
-      continue
-    fi
-    if lvs "pve/$candidate_pool" >/dev/null 2>&1; then
-      continue
-    fi
-    sid="$candidate_sid"
-    thinpool="$candidate_pool"
-    break
-  done
-  [[ -n "$sid" ]] || die "Ran out of system-disk SSD storage names for host digit $hd"
+  if [[ "$ALL" -eq 1 ]]; then
+    sid="$canonical_sid"
+    thinpool="$canonical_pool"
+  else
+    sid=""
+    for letter in {A..Z}; do
+      local candidate_sid candidate_pool
+      candidate_sid="SSD-${hd}${letter}"
+      candidate_pool="pool-${hd}${letter}"
+      if storage_exists "$candidate_sid"; then
+        continue
+      fi
+      if lvs "pve/$candidate_pool" >/dev/null 2>&1; then
+        continue
+      fi
+      sid="$candidate_sid"
+      thinpool="$candidate_pool"
+      break
+    done
+    [[ -n "$sid" ]] || die "Ran out of system-disk SSD storage names for host digit $hd"
+  fi
 
   thin_size_mb="$(awk -v m="$vg_free_mb" 'BEGIN {printf "%.0f", m * 0.95}')"
   if (( thin_size_mb < 1024 )); then
@@ -1900,6 +1938,7 @@ find_existing_system_disk_storage() {
     [[ "$vgname" == "pve" ]] || continue
     [[ "$sid" =~ ^SSD-${hd}[A-Z]$ ]] || continue
     [[ -n "$thinpool" ]] || continue
+    lvs "pve/$thinpool" >/dev/null 2>&1 || continue
     candidates+=("$sid|$thinpool")
   done < <(parse_storage_cfg)
 
@@ -1926,24 +1965,29 @@ cleanup_duplicate_system_disk_storage_entries() {
 ensure_system_disk_storage_entries_from_pve_lvs() {
   local hd="$1"
   local pool_name lv_attr sid
-  local found=0
+  local chosen_pool=""
 
   while read -r pool_name lv_attr; do
     [[ -n "$pool_name" ]] || continue
     [[ "$lv_attr" =~ ^t ]] || continue
     [[ "$pool_name" =~ ^pool-${hd}[A-Z]$ ]] || continue
 
-    found=1
-    sid="SSD-${hd}${pool_name: -1}"
-    if storage_exists "$sid"; then
-      p_ok "System-disk storage already present: $sid -> pve/$pool_name"
-    else
-      p_info "Recreating missing system-disk storage: $sid -> pve/$pool_name"
-      ensure_pvesm_lvm_thin_storage "$sid" "pve" "$pool_name"
+    if [[ -z "$chosen_pool" || "$pool_name" < "$chosen_pool" ]]; then
+      chosen_pool="$pool_name"
     fi
   done < <(lvs --noheadings -o lv_name,lv_attr pve 2>/dev/null | awk 'NF{print $1, $2}')
 
-  [[ "$found" -eq 1 ]] || return 1
+  [[ -n "$chosen_pool" ]] || return 1
+
+  sid="SSD-${hd}${chosen_pool: -1}"
+  if storage_exists "$sid"; then
+    p_ok "System-disk storage already present: $sid -> pve/$chosen_pool"
+  else
+    p_info "Recreating missing system-disk storage: $sid -> pve/$chosen_pool"
+    ensure_pvesm_lvm_thin_storage "$sid" "pve" "$chosen_pool"
+  fi
+
+  cleanup_duplicate_system_disk_storage_entries "$hd" "$sid"
   return 0
 }
 
