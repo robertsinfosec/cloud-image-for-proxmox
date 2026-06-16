@@ -396,12 +396,50 @@ require_cmd() {
 
   if ! command -v "$cmd" >/dev/null 2>&1; then
     err "Missing required command: $cmd"
-    if [[ -n "$pkg" ]]; then
-      err "Install this by running: sudo apt install $pkg"
-    else
+
+    if [[ -z "$pkg" ]]; then
       err "Install the package that provides '$cmd'"
+      exit 1
     fi
-    exit 1
+
+    if [[ "$WHATIF" -eq 1 ]]; then
+      p_warn "Simulation mode: would install package '$pkg' for command '$cmd'"
+      return 0
+    fi
+
+    if [[ "$FORCE" -eq 1 ]]; then
+      p_warn "Force mode: installing missing prerequisite package '$pkg'"
+      if ! run_cmd "Updating package cache" apt-get update; then
+        die "Failed to update package cache. Install manually: apt install $pkg"
+      fi
+      if ! run_cmd "Installing package '$pkg'" apt-get install -y "$pkg"; then
+        die "Failed to install required package '$pkg'. Install manually: apt install $pkg"
+      fi
+    else
+      printf '%s\n' "[?] Required command '$cmd' is missing."
+      printf '%s\n' "[?] Install package '$pkg' now? [y/N]"
+      printf '%s'   "[?] Choice: "
+      local choice
+      read -r choice
+
+      case "$choice" in
+        y|Y|yes|YES)
+          if ! run_cmd "Updating package cache" apt-get update; then
+            die "Failed to update package cache. Install manually: apt install $pkg"
+          fi
+          if ! run_cmd "Installing package '$pkg'" apt-get install -y "$pkg"; then
+            die "Failed to install required package '$pkg'. Install manually: apt install $pkg"
+          fi
+          ;;
+        *)
+          die "Cannot proceed without '$cmd'. Install manually: apt install $pkg"
+          ;;
+      esac
+    fi
+
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      die "Command '$cmd' is still missing after installing '$pkg'."
+    fi
   fi
 }
 
