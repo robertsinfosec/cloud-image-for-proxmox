@@ -1617,6 +1617,20 @@ provision_single_disk() {
       p_info "Heal failed for $label; re-provisioning with a fresh label"
     else
       p_warn "Disk $d already provisioned as $label; will DESTROY and re-provision"
+      if [[ "$STORAGE_TYPE" == "dir" ]]; then
+        local old_mount="/mnt/disks/$existing_label"
+        if storage_exists "$existing_label"; then
+          run_cmd "Removing Proxmox storage '$existing_label'" pvesm remove "$existing_label"
+          _pvesm_invalidate_cache
+        fi
+        if findmnt -n "$old_mount" >/dev/null 2>&1; then
+          run_cmd "Unmounting existing mount $old_mount" umount -lf "$old_mount"
+        fi
+        remove_fstab_mount "$old_mount"
+        if [[ -d "$old_mount" ]]; then
+          run_cmd "Removing mount directory $old_mount" rm -rf "$old_mount"
+        fi
+      fi
     fi
   fi
 
