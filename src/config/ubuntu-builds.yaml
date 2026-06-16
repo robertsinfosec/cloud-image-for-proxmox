@@ -4,6 +4,12 @@
 # VMID is auto-generated as: {node_digit}{distro_digit}{version}
 
 builds:
+  # Ubuntu 26.04 LTS
+  - distro: ubuntu
+    version: "26.04"
+    release: resolute
+    notes: "Ubuntu 26.04 LTS (Resolute Raccoon)"
+
   # Ubuntu 24.04 LTS
   - distro: ubuntu
     version: "24.04"

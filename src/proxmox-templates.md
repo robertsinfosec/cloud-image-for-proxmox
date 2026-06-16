@@ -132,7 +132,7 @@ source .bash_completion
 # Shows: almalinux alpine centos debian opensuse oraclelinux rockylinux ubuntu
 
 ./proxmox-templates.sh --build --distro ubuntu --version <TAB>
-# Shows: 20.04 22.04 24.04 latest
+# Shows: 22.04 24.04 26.04 latest
 
 ./proxmox-templates.sh --build --storage <TAB>
 # Shows: HDD-1A SSD-1A (existing storage pools)
@@ -174,7 +174,7 @@ VMIDs are **automatically generated** using a 6-digit formula:
 
 | Host | Distro | Version | VMID | Calculation |
 |------|--------|---------|------|-------------|
-| pve1 | Ubuntu | 24.04 | `172404` | 1 + 7 + 24 + 04 |
+| pve1 | Ubuntu | 26.04 | `172604` | 1 + 7 + 26 + 04 |
 | pve2 | Debian | 12 | `231200` | 2 + 3 + 12 + 00 |
 | pve3 | AlmaLinux | 9 | `300900` | 3 + 0 + 09 + 00 |
 | pve1 | Alpine | 3.23.0 | `110323` | 1 + 1 + 03 + 23 |
@@ -230,8 +230,8 @@ storage:
 # Per-build override
 builds:
   - distro: ubuntu
-    version: "24.04"
-    release: noble
+    version: "26.04"
+    release: resolute
     override:
       storage:
         device: auto
@@ -288,7 +288,7 @@ Successful: 2
 Failed: 1
 
 ✓ Successful builds:
-  ✓ ubuntu 24.04 (noble)
+  ✓ ubuntu 26.04 (resolute)
   ✓ debian 12 (bookworm)
 
 ✗ Failed builds:
@@ -325,9 +325,9 @@ zzbrainstorm/
 ```yaml
 builds:
   - distro: ubuntu
-    version: "24.04"
-    release: noble
-    notes: "Ubuntu 24.04 LTS (Noble Numbat)"
+    version: "26.04"
+    release: resolute
+    notes: "Ubuntu 26.04 LTS (Resolute Raccoon)"
 ```
 
 **With overrides:**
@@ -386,10 +386,11 @@ Run `--validate` to check configuration before building:
 
 ```
 Validating: ubuntu-builds.yaml
-  Found 3 build(s)
-    ✓ Build #1 (24.04): ubuntu 24.04 (noble) - VMID 172404
-    ✓ Build #2 (22.04): ubuntu 22.04 (jammy) - VMID 172204
-    ✓ Build #3 (20.04): ubuntu 20.04 (focal) - VMID 172004
+  Found 4 build(s)
+    ✓ Build #1 (26.04): ubuntu 26.04 (resolute) - VMID 172604
+    ✓ Build #2 (24.04): ubuntu 24.04 (noble) - VMID 172404
+    ✓ Build #3 (22.04): ubuntu 22.04 (jammy) - VMID 172204
+    ✓ Build #4 (20.04): ubuntu 20.04 (focal) - VMID 172004
 Validating: oraclelinux-builds.yaml
   Found 3 build(s)
     ⚠ Build #1 (10.0): No SHA checksum available - downloads will NOT be validated
@@ -460,8 +461,8 @@ Remove VM templates from Proxmox:
 
 ```
 Templates to remove:
+  - VMID 172604: ubuntu 26.04 (resolute)
   - VMID 172404: ubuntu 24.04 (noble)
-  - VMID 172204: ubuntu 22.04 (jammy)
 
 Remove these templates? [y/N]:
 ```

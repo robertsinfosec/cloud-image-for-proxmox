@@ -214,7 +214,7 @@ source /usr/share/bash-completion/bash_completion
 
 **Templates Script:**
 - `--build --distro <TAB>` -> Shows: `almalinux alpine centos debian opensuse oraclelinux rockylinux ubuntu`
-- `--distro ubuntu --version <TAB>` -> Shows common Ubuntu versions
+- `--distro ubuntu --version <TAB>` -> Shows: `22.04 24.04 26.04 latest`
 - `--storage <TAB>` -> Shows available Proxmox storage pools
 - `--remove <TAB>` -> Shows existing VM template IDs
 

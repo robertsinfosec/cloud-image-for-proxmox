@@ -4,6 +4,10 @@
 
 catalog:
   - distro: ubuntu
+    release: resolute
+    version: "26.04"
+    notes: "Ubuntu 26.04 LTS (Resolute Raccoon)"
+  - distro: ubuntu
     release: noble
     version: "24.04"
     notes: "Ubuntu 24.04 LTS (Noble Numbat)"

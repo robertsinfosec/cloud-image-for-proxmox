@@ -117,7 +117,7 @@ All templates include:
 | <img src="docs/logos/logo-opensuse.png" height="20" valign="middle">&nbsp;**openSUSE** | Leap 15.x | + 2 previous |
 | <img src="docs/logos/logo-oraclelinux.jpg" height="20" valign="middle">&nbsp;**Oracle Linux** | 8.x, 9.x | + 2 previous |
 | <img src="docs/logos/logo-rockylinux.png" height="20" valign="middle">&nbsp;**Rocky Linux** | 8.x, 9.x | + 2 previous |
-| <img src="docs/logos/logo-ubuntu.png" height="20" valign="middle">&nbsp;**Ubuntu** | 20.04, 22.04, 24.04 | + 2 previous |
+| <img src="docs/logos/logo-ubuntu.png" height="20" valign="middle">&nbsp;**Ubuntu** | 22.04, 24.04, 26.04 | + 2 previous |
 
 ---
 

@@ -21,10 +21,10 @@ _proxmox_templates_completion() {
     --version)
       # Version completion depends on distro - show common examples
       if [[ -z "${cur}" ]]; then
-        COMPREPLY=("9" "22.04" "15" "12" "latest")
+        COMPREPLY=("9" "24.04" "26.04" "15" "12" "latest")
       else
         # Let user type their own version
-        COMPREPLY=($(compgen -W "8 9 10 11 12 20.04 22.04 24.04 latest" -- "${cur}"))
+        COMPREPLY=($(compgen -W "8 9 10 11 12 20.04 22.04 24.04 26.04 latest" -- "${cur}"))
       fi
       return 0
       ;;
