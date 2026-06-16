@@ -359,56 +359,66 @@ is_proxmox() {
 require_cmd() {
   local cmd="$1"
   local pkg=""
+  local reason=""
 
   case "$cmd" in
     # util-linux
     lsblk|findmnt|partx|wipefs|blkid|blockdev)
       pkg="util-linux"
+      reason="core disk and mount inspection/manipulation utilities"
       ;;
     # partition editor
     parted)
       pkg="parted"
+      reason="disk partition resize support for system PV auto-expansion"
       ;;
     # LVM
     pvs|vgs|lvs|lvremove|lvextend|lvreduce|vgchange|vgremove|pvremove)
       pkg="lvm2"
+      reason="LVM inspection and storage lifecycle operations"
       ;;
     # ext4 tools
     resize2fs|mkfs.ext4)
       pkg="e2fsprogs"
+      reason="ext4 filesystem tools"
       ;;
     # GPT tooling
     sgdisk)
       pkg="gdisk"
+      reason="GPT partition table operations"
       ;;
     # Proxmox tooling
     pvesm)
       pkg="proxmox-ve"
+      reason="Proxmox storage management commands"
       ;;
     # SMART tools
     smartctl)
       pkg="smartmontools"
+      reason="SMART disk health reporting"
       ;;
     *)
       pkg=""
+      reason=""
       ;;
   esac
 
   if ! command -v "$cmd" >/dev/null 2>&1; then
-    err "Missing required command: $cmd"
-
     if [[ -z "$pkg" ]]; then
+      err "Missing required command: $cmd"
       err "Install the package that provides '$cmd'"
       exit 1
     fi
 
     if [[ "$WHATIF" -eq 1 ]]; then
-      p_warn "Simulation mode: would install package '$pkg' for command '$cmd'"
+      p_warn "Simulation mode: would prompt to install package '$pkg' for missing command '$cmd'"
       return 0
     fi
 
     if [[ "$FORCE" -eq 1 ]]; then
-      p_warn "Force mode: installing missing prerequisite package '$pkg'"
+      p_warn "Missing prerequisite command '$cmd'"
+      p_warn "Reason: ${reason:-required by this script}"
+      p_warn "Force mode: installing package '$pkg' automatically"
       if ! run_cmd "Updating package cache" apt-get update; then
         die "Failed to update package cache. Install manually: apt install $pkg"
       fi
@@ -416,6 +426,10 @@ require_cmd() {
         die "Failed to install required package '$pkg'. Install manually: apt install $pkg"
       fi
     else
+      p_warn "Missing prerequisite command '$cmd'"
+      p_warn "Reason: ${reason:-required by this script}"
+      p_warn "Package '$pkg' can provide this command"
+      printf '\n'
       printf '%s\n' "[?] Required command '$cmd' is missing."
       printf '%s\n' "[?] Install package '$pkg' now? [y/N]"
       printf '%s'   "[?] Choice: "
