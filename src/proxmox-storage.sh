@@ -972,6 +972,17 @@ reclaim_system_disk() {
     p_ok "LV pve/data_tdata not present (already removed)"
   fi
 
+  # If this host already has a pve-backed SSD-<digit><letter> storage entry,
+  # reuse it instead of minting a new letter every time reclaim runs.
+  if existing_system_storage="$(find_existing_system_disk_storage "$hd" 2>/dev/null || true)"; [[ -n "$existing_system_storage" ]]; then
+    sid="${existing_system_storage%%|*}"
+    thinpool="${existing_system_storage##*|}"
+    p_info "Reusing existing system-disk storage: $sid (VG pve, thin pool $thinpool)"
+    ensure_pvesm_lvm_thin_storage "$sid" "pve" "$thinpool"
+    cleanup_duplicate_system_disk_storage_entries "$hd" "$sid"
+    return 0
+  fi
+
   vg_free_mb="$(vgs --noheadings -o vg_free --units m --nosuffix pve 2>/dev/null | awk '{$1=$1; print int($1); exit}')"
   vg_free_mb="${vg_free_mb:-0}"
   if (( vg_free_mb < 2048 )); then
@@ -1097,7 +1108,7 @@ validate_storage_filters() {
       # This looks like a storage name (e.g., HDD-2C)
       # Check if it exists in Proxmox storage config
       local exists=0
-      while IFS='|' read -r type sid path nodes shared; do
+      while IFS='|' read -r type sid path nodes shared vgname thinpool; do
         if [[ "$sid" == "$filter" ]]; then
           exists=1
           break
@@ -1857,17 +1868,52 @@ parse_storage_cfg() {
   [[ -f "$cfg" ]] || return 0
   awk '
     /^[[:alpha:]]+:/ {
-      type=$1; sub(":", "", type); sid=$2; path=""; nodes=""; shared=""; inblock=1; next
+      type=$1; sub(":", "", type); sid=$2; path=""; nodes=""; shared=""; vgname=""; thinpool=""; inblock=1; next
     }
     inblock && /^[[:space:]]*path[[:space:]]+/ {path=$2}
     inblock && /^[[:space:]]*nodes[[:space:]]+/ {nodes=$2}
     inblock && /^[[:space:]]*shared[[:space:]]+/ {shared=$2}
+    inblock && /^[[:space:]]*vgname[[:space:]]+/ {vgname=$2}
+    inblock && /^[[:space:]]*thinpool[[:space:]]+/ {thinpool=$2}
     inblock && NF==0 {
-      if (sid != "") {print type "|" sid "|" path "|" nodes "|" shared}
+      if (sid != "") {print type "|" sid "|" path "|" nodes "|" shared "|" vgname "|" thinpool}
       inblock=0
     }
-    END { if (sid != "") {print type "|" sid "|" path "|" nodes "|" shared} }
+    END { if (sid != "") {print type "|" sid "|" path "|" nodes "|" shared "|" vgname "|" thinpool} }
   ' "$cfg"
+}
+
+find_existing_system_disk_storage() {
+  local hd="$1"
+  local type sid path nodes shared vgname thinpool
+  local candidates=()
+
+  while IFS='|' read -r type sid path nodes shared vgname thinpool; do
+    [[ "$type" == "lvmthin" ]] || continue
+    [[ "$vgname" == "pve" ]] || continue
+    [[ "$sid" =~ ^SSD-${hd}[A-Z]$ ]] || continue
+    [[ -n "$thinpool" ]] || continue
+    candidates+=("$sid|$thinpool")
+  done < <(parse_storage_cfg)
+
+  [[ ${#candidates[@]} -gt 0 ]] || return 1
+
+  mapfile -t candidates < <(printf '%s\n' "${candidates[@]}" | sort)
+  printf '%s\n' "${candidates[0]}"
+}
+
+cleanup_duplicate_system_disk_storage_entries() {
+  local hd="$1" keep_sid="$2"
+  local type sid path nodes shared vgname thinpool
+
+  while IFS='|' read -r type sid path nodes shared vgname thinpool; do
+    [[ "$type" == "lvmthin" ]] || continue
+    [[ "$vgname" == "pve" ]] || continue
+    [[ "$sid" =~ ^SSD-${hd}[A-Z]$ ]] || continue
+    [[ "$sid" == "$keep_sid" ]] && continue
+    p_warn "Removing stale system-disk storage '$sid' (keeping '$keep_sid')"
+    run_cmd "Removing stale system-disk storage '$sid'" pvesm remove "$sid"
+  done < <(parse_storage_cfg)
 }
 
 node_in_list() {
@@ -2130,7 +2176,7 @@ smart_life_remaining() {
 build_device_storage_map() {
   local -n _map_ref="$1"
 
-  while IFS='|' read -r type sid path nodes shared; do
+  while IFS='|' read -r type sid path nodes shared vgname thinpool; do
     [[ -n "$sid" ]] || continue
     [[ "$sid" == "local" || "$sid" == "local-lvm" ]] && continue
 
@@ -2218,7 +2264,7 @@ show_storage_mapping() {
   
   # Parse storage config to get paths, filtering by node assignment
   declare -A storage_paths storage_types
-  while IFS='|' read -r type sid path nodes shared; do
+  while IFS='|' read -r type sid path nodes shared vgname thinpool; do
     [[ -n "$sid" ]] || continue
     [[ "$sid" == "local" || "$sid" == "local-lvm" ]] && continue
     
@@ -2526,7 +2572,7 @@ deprovision_storage_entries() {
   node="$(hostname -s)"
   declare -A storage_paths storage_types storage_nodes storage_shared storage_ids
 
-  while IFS='|' read -r type sid path nodes shared; do
+  while IFS='|' read -r type sid path nodes shared vgname thinpool; do
     [[ -n "$sid" ]] || continue
     storage_types["$sid"]="$type"
     storage_paths["$sid"]="$path"
