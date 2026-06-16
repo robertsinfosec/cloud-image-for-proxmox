@@ -13,6 +13,7 @@ C_ERR="\033[1;31m"      # red
 p_info()  { echo -e "${C_INFO}[*]${NC} $*"; }
 p_ok()    { echo -e "${C_OK}[+]${NC} $*"; }
 p_warn()  { echo -e "${C_WARN}[!]${NC} $*" >&2; }
+p_q()     { echo -e "${C_WARN}[?]${NC} $*"; }
 p_err()   { echo -e "${C_ERR}[-]${NC} $*" >&2; }
 p_step()  { echo -e "${C_INFO}[*] STEP $1:${NC} ${*:2}"; }
 
@@ -20,6 +21,7 @@ p_step()  { echo -e "${C_INFO}[*] STEP $1:${NC} ${*:2}"; }
 log()  { p_info "$@"; }
 ok()   { p_ok "$@"; }
 warn() { p_warn "$@"; }
+ask()  { p_q "$@"; }
 err()  { p_err "ERROR: $*"; }
 die()  { err "$*"; exit 1; }
 
@@ -294,8 +296,8 @@ confirm_destroy() {
     return 0
   fi
 
-  printf '%s\n' "[!] Type DESTROY to continue. Any other input aborts."
-  printf '%s'   "[?] Confirm: "
+  p_warn "Type DESTROY to continue. Any other input aborts."
+  printf '%b' "${C_WARN}[?]${NC} Confirm: "
   read -r confirm
 
   if [[ "$confirm" != "DESTROY" ]]; then
@@ -417,7 +419,6 @@ require_cmd() {
 
     if [[ "$FORCE" -eq 1 ]]; then
       p_warn "Missing prerequisite command '$cmd'"
-      p_warn "Reason: ${reason:-required by this script}"
       p_warn "Force mode: installing package '$pkg' automatically"
       if ! run_cmd "Updating package cache" apt-get update; then
         die "Failed to update package cache. Install manually: apt install $pkg"
@@ -426,14 +427,9 @@ require_cmd() {
         die "Failed to install required package '$pkg'. Install manually: apt install $pkg"
       fi
     else
-      p_warn "Missing prerequisite command '$cmd'"
-      p_warn "Reason: ${reason:-required by this script}"
-      p_warn "Package '$pkg' can provide this command"
-      printf '\n'
-      printf '%s\n' "[?] Required command '$cmd' is missing."
-      printf '%s\n' "[?] Install package '$pkg' now? [y/N]"
-      printf '%s'   "[?] Choice: "
+      p_q "Utility '$cmd' is required for ${reason:-this operation}."
       local choice
+      printf '%b' "${C_WARN}[?]${NC} Install $pkg now? [y/N]: "
       read -r choice
 
       case "$choice" in
@@ -489,8 +485,8 @@ require_nfs_common() {
   fi
   
   # Interactive prompt
-  printf '%s\n' "[?] Install nfs-common package now? (y/N)"
-  printf '%s'   "[?] Choice: "
+  p_q "Install nfs-common package now? [y/N]"
+  printf '%b' "${C_WARN}[?]${NC} Choice: "
   read -r choice
   
   case "$choice" in

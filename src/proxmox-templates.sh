@@ -94,7 +94,7 @@ setStatus() {
             echo -e "[${Yellow}!${NC}] ${Yellow}${description}${NC}"
         ;;
         q)
-            echo -e "[${LightPurple}?${NC}] ${LightPurple}${description}${NC}"
+            echo -e "[${Yellow}?${NC}] ${Yellow}${description}${NC}"
         ;;
         step)
             echo -e "[${LightCyan}*${NC}] ${LightCyan}STEP $description${NC}"
@@ -189,7 +189,8 @@ check_yq() {
         fi
 
         echo "Utility 'yq' is required to parse YAML."
-        read -r -p "Install mikefarah/yq v4 now? [y/N]: " reply
+        printf '[%b?%b] %bInstall mikefarah/yq v4 now? [y/N]: %b' "$Yellow" "$NC" "$Yellow" "$NC"
+        read -r reply
         if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
             echo "ERROR: 'yq' not installed."
             exit 1
@@ -254,7 +255,8 @@ check_libguestfs() {
         echo "Without libguestfs-tools, this script cannot create functional VM templates."
         echo "═══════════════════════════════════════════════════════════════════════════════"
         echo ""
-        read -r -p "Install libguestfs-tools now? [y/N]: " reply
+        printf '[%b?%b] %bInstall libguestfs-tools now? [y/N]: %b' "$Yellow" "$NC" "$Yellow" "$NC"
+        read -r reply
         if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
             echo ""
             echo "ERROR: Cannot proceed without libguestfs-tools."
@@ -307,7 +309,8 @@ check_dhcpcd() {
         echo "Reference: https://github.com/libguestfs/libguestfs/issues/211"
         echo "═══════════════════════════════════════════════════════════════════════════════"
         echo ""
-        read -r -p "Install dhcpcd-base now? [y/N]: " reply
+        printf '[%b?%b] %bInstall dhcpcd-base now? [y/N]: %b' "$Yellow" "$NC" "$Yellow" "$NC"
+        read -r reply
         if [[ "$reply" != "y" && "$reply" != "Y" ]]; then
             echo ""
             echo "ERROR: Cannot proceed without DHCP client for libguestfs."
